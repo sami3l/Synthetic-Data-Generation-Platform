@@ -166,11 +166,3 @@ uvicorn app.main:app --reload
 Built with ❤️ by Sami.
 
 ```
-
----
-
-Let me know if you want:
-- A PDF version of this full report
-- Deployment instructions (Docker, etc.)
-- Integration of a web dashboard (React/Next.js) to control all of this.
-```
