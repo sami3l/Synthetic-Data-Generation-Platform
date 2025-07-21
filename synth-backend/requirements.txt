@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+sqlalchemy
+asyncpg
+psycopg2-binary
+python-dotenv
+python-jose[cryptography]
+passlib[bcrypt]
+pydantic 
+
+#Note: run with => python -m uvicorn app.main:app --reload
