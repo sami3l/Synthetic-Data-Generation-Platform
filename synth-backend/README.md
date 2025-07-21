@@ -159,10 +159,6 @@ uvicorn app.main:app --reload
 * Support for more models (GaussianCopula, etc.)
 * OAuth (Google/GitHub)
 
----
-
 ## 📧 Contact
 
 Built with ❤️ by Sami.
-
-```
