@@ -7,5 +7,9 @@ python-dotenv
 python-jose[cryptography]
 passlib[bcrypt]
 pydantic 
+sdv
+sdmetrics
+pandas
+numpy
 
 #Note: run with => python -m uvicorn app.main:app --reload

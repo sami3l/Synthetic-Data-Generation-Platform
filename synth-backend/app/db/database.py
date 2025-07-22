@@ -22,6 +22,7 @@ from app.models.SyntheticDataset import SyntheticDataset
 from app.models.Notification import Notification
 from app.models.tvae_model import TVAEModel
 from app.models.ctgan_model import CTGANModel
+from app.models.OptimizationResult import OptimizationResult 
 # Add other models as needed
 
 def get_db() -> Session:  # type: ignore

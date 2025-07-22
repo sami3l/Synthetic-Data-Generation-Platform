@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 from app.models.SyntheticDataset import SyntheticDataset
+from datetime import datetime
 
 class DatasetService:
 
@@ -8,8 +9,20 @@ class DatasetService:
         return db.query(SyntheticDataset).filter_by(request_id=request_id).first()
 
     @staticmethod
-    def save_generated_data(db: Session, request_id: int, file_path: str):
-        dataset = SyntheticDataset(request_id=request_id, file_path=file_path)
-        db.add(dataset)
+    def save_generated_data(
+        db: Session, 
+        request_id: int, 
+        file_path: str,
+        user_id: int
+    ):
+        """Sauvegarde les données synthétiques générées"""
+        synthetic_dataset = SyntheticDataset(
+            request_id=request_id,
+            file_path=file_path,
+            user_id=user_id,  # Ajout de l'ID utilisateur
+            created_at=datetime.now()
+        )
+        db.add(synthetic_dataset)
         db.commit()
-        return dataset
+        db.refresh(synthetic_dataset)
+        return synthetic_dataset

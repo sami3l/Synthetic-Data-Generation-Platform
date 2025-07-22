@@ -13,7 +13,7 @@ class NotificationOut(NotificationBase):
     id: int
     user_id: int
     is_read: bool
-    timestamp: datetime
+    timestamp: datetime.datetime
 
     class Config:
         orm_mode = True
