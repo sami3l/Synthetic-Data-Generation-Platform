@@ -1,164 +1,143 @@
-## 🔍 Project Summary
+# 🔄 Plateforme de Génération de Données Synthétiques
 
-### 📌 Project Name
+## 🔍 Résumé du Projet
 
-**Synthetic Data Generation Backend**
+### 📌 Nom du Projet
+**Backend de Génération de Données Synthétiques**
 
-### 🎯 Objective
+### 🎯 Objectifs
+Système backend permettant aux utilisateurs de :
+* Soumettre des demandes de génération de données synthétiques
+* Entraîner automatiquement des modèles génératifs (CTGAN, TVAE)
+* Optimiser les hyperparamètres des modèles
+* Évaluer la qualité des données générées
+* Recevoir des notifications sur l'état de leurs demandes
 
-To build a backend system that allows users to:
+## 🛠️ Technologies Utilisées
 
-* Submit requests for synthetic tabular data generation.
-* Automatically train generative models (CTGAN, TVAE) on submitted datasets.
-* Evaluate generated synthetic data using SDMetrics.
-* Manage user roles, notifications, and access via a clean modular architecture.
+| Couche            | Technologies                                           |
+|-------------------|-------------------------------------------------------|
+| Framework Backend | FastAPI                                               |
+| ORM              | SQLAlchemy                                            |
+| Base de données  | PostgreSQL                                            |
+| Auth             | JWT, Pydantic                                         |
+| Modèles IA       | CTGAN, TVAE (SDV Library)                            |
+| Évaluation       | SDMetrics                                             |
+| Env Config       | python-dotenv                                         |
+| Dev Tools        | Alembic, Uvicorn                                      |
 
----
+## 🏗️ Architecture du Système
 
-## 🛠️ Technologies Used
+### 📁 Modules Principaux
 
-| Layer             | Technologies                                           |
-| ----------------- | ------------------------------------------------------ |
-| Backend Framework | FastAPI                                                |
-| ORM               | SQLAlchemy                                             |
-| Database          | postgresql                                             |
-| Auth              | JWT (FastAPI Dependencies), Pydantic                   |
-| AI Models         | CTGAN, TVAE from SDV Library                           |
-| Evaluation        | SDMetrics                                              |
-| Env Management    | `python-dotenv`                                        |
-| Dev Tools         | Alembic (for DB migrations), Uvicorn, HTTPie (testing) |
+#### 🔐 Module d'Authentification
+* **User**: Gestion des identités et connexions
+* **UserProfile**: Informations utilisateur
+* JWT intégré dans les dépendances FastAPI
 
----
+#### 👤 Opérations Utilisateur
+* **DataRequest**: Demandes de génération
+* **RequestParameters**: Configuration des modèles et optimisation
+* **SyntheticDataset**: Stockage des résultats
+* **DatasetService**: Gestion des données
 
-## 🧱 System Architecture
+#### ⚙️ Traitement IA
+* **AIProcessingService**: 
+  * Orchestration de la génération
+  * Optimisation des hyperparamètres
+  * Évaluation de la qualité
+* **Modèles**:
+  * CTGAN et TVAE avec SDV
+  * Optimisation par grid search ou random search
+  * Validation qualité intégrée
 
-### 📁 Modules
+#### 📬 Système de Notifications
+* Notifications en temps réel
+* Suivi des états des générations
+* Alertes de completion/erreur
 
-#### 🔐 Authentication Module
+## 📊 Schéma de Base de Données
 
-* **User**: Handles identity and login.
-* **UserProfile**: Stores bio, organization, and creation timestamps.
-* JWT-based auth integrated in FastAPI dependencies.
+### 🆕 Nouvelles Tables
 
-#### 👤 User Operations
+#### OptimizationResult
+* `id`, `request_id`, `best_parameters`, `quality_score`, `created_at`
+* Stockage des résultats d'optimisation
 
-* **DataRequest**: Represents a user's request to generate synthetic data.
-* **RequestParameters**: Stores generation configuration like model, epochs, etc.
-* **SyntheticDataset**: Stores reference to the output file and quality score.
-* **DatasetService**: Provides download and metadata functions.
+### ⚡ Mises à jour
 
-#### ⚙️ AI Processing
+#### RequestParameters (Ajouts)
+* `optimization_enabled`: Boolean
+* `optimization_search_type`: String (grid/random)
+* `optimization_n_trials`: Integer
 
-* **AIProcessingService**: Orchestrates synthetic data generation.
-* **ModelManager**: Handles logic between CTGAN/TVAE model classes.
-* **CTGANModel / TVAEModel**: Wrap around SDV Synthesizers.
-* **QualityValidator**: Uses SDMetrics to evaluate synthetic data quality.
+## 📡 API Endpoints
 
-#### 📧 Notification System
+### Génération de Données
+```
+POST /data/generate/{request_id}
+```
+Paramètres:
+* `request_id`: ID de la requête
+* `optimization`: Configuration d'optimisation (optionnel)
 
-* **Notification**: Stores messages sent to users (e.g., completion, failure).
-* **NotificationService**: Sends alerts and reminders.
+### Notifications
+```
+GET /notifications
+POST /notifications/{notification_id}/read
+```
 
----
+## 🚀 Installation et Démarrage
 
-## 🔗 Database Schema
-
-### 👤 User
-
-* `id`, `email`, `hashed_password`
-* **Relations**:
-
-  * `UserProfile` (One-to-One)
-  * `DataRequests` (One-to-Many)
-  * `SyntheticDatasets` (One-to-Many)
-  * `Notifications` (One-to-Many)
-
-### 📄 UserProfile
-
-* `id`, `user_id`, `organization`, `created_at`, `updated_at`
-* FK: `user_id → User.id`
-
-### 📥 DataRequest
-
-* `id`, `user_id`, `status`, `created_at`
-* FK: `user_id → User.id`
-* One-to-One with `RequestParameters`
-
-### ⚙️ RequestParameters
-
-* `id`, `data_request_id`, `model_type`, `epochs`, `batch_size`, etc.
-* FK: `data_request_id → DataRequest.id`
-
-### 🧪 SyntheticDataset
-
-* `id`, `user_id`, `data_request_id`, `model_used`, `quality_score`, `path`
-* FK: `user_id → User.id`, `data_request_id → DataRequest.id`
-
-### 🛠️ Models
-
-* **CTGANModel / TVAEModel**:
-
-  * Trains on real data from CSV or DB.
-  * Generates synthetic dataset.
-  * Returns `SyntheticDataset` with metadata.
-
-### 📨 Notification
-
-* `id`, `user_id`, `message`, `is_read`, `timestamp`
-* FK: `user_id → User.id`
-
-## 🧪 Running the App
-
-### Step 1: Setup Environment
-
+### 1. Configuration
 ```bash
 cp .env.example .env
 ```
 
-Example `.env`:
-
+`.env` exemple:
 ```
-DATABASE_URL=mysql+pymysql://username:password@localhost:3306/synth_db
+DATABASE_URL=postgresql://user:password@localhost:5432/synth_db
 SECRET_KEY=your_jwt_secret
 ```
 
-### Step 2: Install Dependencies
-
+### 2. Dépendances
 ```bash
 pip install -r requirements.txt
 ```
 
-### Step 3: Run Migrations
-
+### 3. Migrations
 ```bash
 alembic upgrade head
 ```
 
-### Step 4: Launch App
-
+### 4. Lancement
 ```bash
 uvicorn app.main:app --reload
 ```
 
----
+## 📈 Exemple d'Utilisation
 
-## 📊 API Endpoints (Sample)
+### Création d'une requête avec optimisation
+```json
+{
+  "request": {
+    "dataset_name": "customers.csv"
+  },
+  "params": {
+    "model_type": "tvae",
+    "optimization_enabled": true,
+    "optimization_search_type": "random",
+    "optimization_n_trials": 5
+  }
+}
+```
 
-* `POST /auth/signup`: Register a user
-* `POST /auth/login`: JWT login
-* `POST /data/request`: Submit new synthetic request
-* `GET /data/requests`: View your requests
-* `POST /notifications`: Read notifications
+## 🔜 Améliorations Futures
+* Interface utilisateur complète
+* Visualisation des métriques de qualité
+* Support de nouveaux modèles
+* Optimisation distribuée
+* Intégration OAuth
 
----
-
-## 📌 Future Enhancements
-
-* Admin dashboard (approve/deny requests)
-* Upload CSVs from UI
-* Support for more models (GaussianCopula, etc.)
-* OAuth (Google/GitHub)
-
-## 📧 Contact
-
-Built with ❤️ by Sami.
+## 📝 Contact
+Développé par Sami
