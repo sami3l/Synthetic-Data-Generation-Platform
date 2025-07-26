@@ -19,3 +19,5 @@ class DataRequest(Base):
     synthetic_dataset = relationship("SyntheticDataset", back_populates="data_request", uselist=False)
     optimization_results = relationship("OptimizationResult", back_populates="request")
     user = relationship("User", back_populates="data_requests")
+    
+    
