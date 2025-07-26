@@ -3,10 +3,13 @@ from pydantic import BaseModel
 
 
 class RequestParametersBase(BaseModel):
-    model_type: str
-    epochs: Optional[int]
-    batch_size: Optional[int]
-    learning_rate: Optional[float]
+    model_type: str = "ctgan"
+    epochs: int = 300
+    batch_size: int = 500
+    learning_rate: float = 2e-4
+    optimization_enabled: bool = False
+    optimization_search_type: str = "grid"
+    optimization_n_trials: int = 5
 
 class RequestParametersCreate(RequestParametersBase):
     request_id: int

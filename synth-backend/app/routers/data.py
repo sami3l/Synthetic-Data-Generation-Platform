@@ -11,7 +11,8 @@ from app.dependencies.auth import get_current_user
 from app.models.user import User
 from app.schemas.DataRequest import DataRequestWithParams
 from app.ai.services.AIProcessingService import AIProcessingService
-
+from app.services.NotificationService import NotificationService
+from app.models.OptimizationResult import OptimizationResult
 router = APIRouter(prefix="/data", tags=["Data"])
 
 # DataRequest endpoints
@@ -45,15 +46,56 @@ def create_data_request(
 async def generate_synthetic_data(
     request_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    service: AIProcessingService = Depends(AIProcessingService)
+):
+    """
+    Endpoint to process a synthetic data generation request.
+    Supports hyperparameter optimization if enabled in the request parameters.
+    """
+    try:
+        result = await service.process_generation_request(
+            db=db,
+            request_id=request_id,
+            current_user_id=current_user.id
+        )
+        return result
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@router.post("/generate/{request_id}")
+async def generate_synthetic_data(
+    request_id: int,
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    ai_service = AIProcessingService()
-    result = await ai_service.process_generation_request(
-        db=db,
-        request_id=request_id,
-        current_user_id=current_user.id  # Passage de l'ID de l'utilisateur courant
-    )
-    return result
+    
+    try:
+
+
+        # Appel au service de traitement AI pour générer les données synthétiques
+        ai_service = AIProcessingService()
+        result = await ai_service.process_generation_request(
+            db=db,
+            request_id=request_id,
+            current_user_id=current_user.id  # Passage de l'ID de l'utilisateur courant
+        )
+        # Si la génération est réussie, créer une notification
+        if result.success:
+            NotificationService.create_generation_success_notification(
+                db=db,
+                user_id=current_user.id,
+                request_id=request_id,
+                quality_score=result.quality_score
+            )
+        return result
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Data generation failed.")
+    
 
 @router.get("/requests/{request_id}", response_model=DataRequestOut)
 def get_data_request(
@@ -109,3 +151,24 @@ def get_request_parameters(
         raise HTTPException(status_code=404, detail="Parameters not found or unauthorized")
     return rp
 
+@router.get("/optimization/{request_id}")
+async def get_optimization_results(
+    request_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    Endpoint to retrieve the results of hyperparameter optimization.
+    """
+    optimization_result = db.query(OptimizationResult).filter(
+        OptimizationResult.request_id == request_id
+        ).join(DataRequest).filter( DataRequest.user_id == user.id ).first()
+
+    if not optimization_result:
+        raise HTTPException(status_code=404, detail="Optimization results not found")
+
+    return {
+        "request_id": request_id,
+        "best_parameters": optimization_result.best_parameters,
+        "quality_score": optimization_result.quality_score
+    }
