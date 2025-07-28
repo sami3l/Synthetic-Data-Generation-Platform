@@ -1,20 +1,21 @@
-import { Tabs } from 'expo-router';
+import { Stack } from 'expo-router';
+import React from 'react';
+import '../global.css';
 import { Provider } from 'react-redux';
-import { store } from '../store';
+import { store } from '../store/index'; // Adjust this path to your actual store file
+
 
 export default function RootLayout() {
   return (
-    <Provider store={store}>
-      <Tabs
-        screenOptions={{
-          headerShown: false,
-          tabBarActiveTintColor: '#0a7ea4',
-        }}
-      >
-        <Tabs.Screen name="home" options={{ title: 'Home' }} />
-        <Tabs.Screen name="requests" options={{ title: 'Requests' }} />
-        <Tabs.Screen name="notifications" options={{ title: 'Notifications' }} />
-      </Tabs>
+      <Provider store={store}>
+    <Stack>
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen name="login" options={{ headerShown: false }} />
+      <Stack.Screen name="profile" options={{headerShown: false  }} />
+      <Stack.Screen name="requests" options={{ headerShown: false  }} />
+      
+    </Stack>
     </Provider>
   );
 }
+
