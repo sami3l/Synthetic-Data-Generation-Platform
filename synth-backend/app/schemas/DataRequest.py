@@ -1,8 +1,7 @@
+from pydantic import BaseModel, Field
+from typing import Optional, List
 from datetime import datetime
-from typing import Optional
-from pydantic import BaseModel, ConfigDict
-from app.schemas.RequestParameters import RequestParametersOut
-
+from app.schemas.RequestParameters import RequestParametersBase, RequestParametersOut
 
 class DataRequestBase(BaseModel):
     request_name: str
@@ -14,20 +13,33 @@ class DataRequestCreate(DataRequestBase):
 class DataRequestOut(DataRequestBase):
     id: int
     user_id: int
-    status: str
+    status: str = "pending"
     created_at: datetime
     updated_at: datetime
-    parameters: Optional[RequestParametersOut] = None
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-class DataRequestWithParams(BaseModel):
-    request: DataRequestCreate
-    params: RequestParametersOut    
+    # ✅ NOUVEAUX CHAMPS POUR APPROBATION
+    approved_by: Optional[int] = None
+    approved_at: Optional[datetime] = None
+    rejection_reason: Optional[str] = None
+    request_parameters: Optional[RequestParametersOut] = None
 
     class Config:
-        orm_mode = True
-        arbitrary_types_allowed = True
+        from_attributes = True
         json_encoders = {
-            datetime: lambda v: v.isoformat() if v else None
+            datetime: lambda v: v.isoformat()
         }
+
+class DataRequestWithParams(BaseModel):
+    """
+    Input payload:
+      {
+        "request": { ... },
+        "params":  { ... }
+      }
+    """
+    request: DataRequestBase
+    params: RequestParametersBase
+
+# ✅ NOUVEAUX SCHEMAS POUR APPROBATION
+class RequestApprovalAction(BaseModel):
+    rejection_reason: Optional[str] = None
+

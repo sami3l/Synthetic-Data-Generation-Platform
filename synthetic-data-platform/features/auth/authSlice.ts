@@ -19,15 +19,7 @@ const initialState: AuthState = {
 export const login = createAsyncThunk(
   'auth/login',
   async (credentials: { email: string; password: string }) => {
-    const response = await authService.login(credentials);
-    return response;
-  }
-);
-
-export const register = createAsyncThunk(
-  'auth/register',
-  async (data: { email: string; password: string; username?: string }) => {
-    const response = await authService.register(data);
+    const response = await authService.login(credentials.email, credentials.password);
     return response;
   }
 );
@@ -41,9 +33,15 @@ const authSlice = createSlice({
       state.token = null;
       authService.logout();
     },
+    // Nouvelle action pour initialiser l'utilisateur depuis AsyncStorage
+    initializeUser: (state, action) => {
+      state.user = action.payload.user;
+      state.token = action.payload.token;
+    },
   },
   extraReducers: (builder) => {
     builder
+      // Login
       .addCase(login.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -60,5 +58,5 @@ const authSlice = createSlice({
   },
 });
 
-export const { logout } = authSlice.actions;
+export const { logout, initializeUser } = authSlice.actions;
 export default authSlice.reducer;

@@ -12,10 +12,21 @@ class UserLogin(BaseModel):
     password: str
 
 
+
 class UserResponse(BaseModel):
     id: int
     email: EmailStr
     role: str
+    username: str | None = None
+    is_active: bool
 
     class Config:
-        orm_mode = True
+        from_attributes = True
+
+
+class UserUpdateRole(BaseModel):
+    role: str
+
+
+class UserUpdateActive(BaseModel):
+    is_active: bool

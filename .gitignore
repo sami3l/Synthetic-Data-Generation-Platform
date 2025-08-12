@@ -1,0 +1,9 @@
+API_V2_SUMMARY.md
+ADMIN_README.md
+synth-backend/.env
+synth-backend/.env.example
+*.csv
+*.csv
+synth-backend/requirements.txt
+synth-backend/requirements.txt
+synthetic-data-platform/.env

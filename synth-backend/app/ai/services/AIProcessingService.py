@@ -1,11 +1,14 @@
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 import pandas as pd
 import os
 import random
 from pathlib import Path
 from itertools import product
 from typing import Dict, Any, Tuple, List, Optional
+import logging
+from contextlib import asynccontextmanager
+
 from app.models.DataRequest import DataRequest
 from app.models.RequestParameters import RequestParameters
 from app.ai.services.quality_validator import QualityValidator
@@ -13,6 +16,19 @@ from app.ai.models.model_factory import get_model_wrapper
 from app.services.DataRequestService import DataRequestService
 from app.services.DatasetService import DatasetService
 from app.services.NotificationService import NotificationService
+from app.services.SupabaseStorageService import SupabaseStorageService
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+CTGAN_HYPERPARAMETERS = [
+    "epochs", "batch_size", "learning_rate", "discriminator_lr", "generator_lr"
+]
+
+TVAE_HYPERPARAMETERS = [
+    "epochs", "batch_size", "learning_rate", "embedding_dim", "compressor_dim"
+]
 
 class AIProcessingService:
     def __init__(self):
@@ -20,16 +36,147 @@ class AIProcessingService:
         self.dataset_service = DatasetService()
         self.request_service = DataRequestService()
         self.notification_service = NotificationService()
+        self.storage_service = SupabaseStorageService()
         
-        # Définir les chemins de base
+        # Define base paths
         self.base_path = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
         self.data_dir = self.base_path / "data"
         self.dataset_dir = self.data_dir / "datasets"
         self.synthetic_dir = self.data_dir / "synthetic"
         
-        # Créer les dossiers nécessaires
+        # Create necessary directories
+        self._ensure_directories()
+
+    def _ensure_directories(self):
+        """Ensure all required directories exist"""
         self.dataset_dir.mkdir(parents=True, exist_ok=True)
         self.synthetic_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Directories initialized: {self.dataset_dir}, {self.synthetic_dir}")
+
+    def optimize_hyperparameters(search_type, hyperparameters, n_trials):
+        if search_type == "grid":
+            # Implémentation de la recherche par grille
+            pass
+        elif search_type == "random":
+            # Implémentation de la recherche aléatoire
+            pass
+        elif search_type == "bayesian":
+            # Implémentation de l'optimisation bayésienne
+            pass
+
+    async def generate_synthetic_data(
+        self,   
+        db: Session,
+        request_id: int,
+        current_user_id: Optional[int] = None,
+        optimize: bool = False,
+        search_type: str = "grid",
+        n_random: int = 5
+    ) -> Dict[str, Any]:
+        """
+        Generate synthetic data based on the provided parameters.
+        """
+        pass
+        # Retrieve request and parameters
+        data_request = db.query(DataRequest).options(
+            joinedload(DataRequest.request_parameters)
+        ).filter(DataRequest.id == request_id).first()
+        if not data_request:
+            raise HTTPException(status_code=404, detail="Request not found")
+        # Verify file exists
+        dataset_path = self.dataset_dir / data_request.dataset_name
+        if not dataset_path.exists():
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Dataset not found: {dataset_path}"
+            )
+        # Load parameters
+        params = data_request.request_parameters
+
+        if not params:
+            raise HTTPException(
+                status_code=400,
+                detail="Parameters not found for request"
+            )
+        # Check if optimization is required
+        if optimize:
+            best_model, best_params, best_score = await self.search_best_hyperparameters(
+                data=pd.read_csv(dataset_path),
+                params=params
+            )
+
+        return {
+            "status": "success",
+            "data": {
+                "request_id": request_id,
+                "dataset_name": data_request.dataset_name,
+                "model_type": params.model_type,
+                "optimize": optimize,
+                "search_type": search_type,
+                "n_random": n_random
+            },
+            "optimized": optimize,
+            "best_params": best_params,
+            "best_score": best_score
+        }
+        # Load original data
+        original_data = pd.read_csv(dataset_path)
+        logger.info(f"Loaded dataset with {len(original_data)} rows and {len(original_data.columns)} columns")
+        # Initialize variables
+        model = None
+        synthetic_data = None
+        quality_score = None
+        optimized = False
+        best_params = None  
+        best_score = -float('inf')
+        # Handle request status
+        async with self._handle_request_status(db, data_request):
+            try:
+                # Create model wrapper
+                model = get_model_wrapper(
+                    model_type=params.model_type,
+                    hyperparameters=params.hyperparameters
+                )
+                logger.info(f"Model created: {model}")
+
+                # Train the model
+                await model.train(original_data)
+                logger.info("Model training completed")
+
+                # Generate synthetic data
+                synthetic_data = await model.generate(len(original_data))
+                logger.info(f"Generated synthetic data with {len(synthetic_data)} rows")
+
+                # Evaluate quality
+                quality_score = self.quality_validator.evaluate(
+                    real_data=original_data,
+                    synthetic_data=synthetic_data
+                )
+                logger.info(f"Quality score: {quality_score:.4f}")
+
+                # Check if optimization is required
+                if optimize:
+                    best_model, best_params, best_score = await self.search_best_hyperparameters(
+                        data=synthetic_data,
+                        params=params,
+                        search_type=search_type,
+                        n_random=n_random
+                    )
+                    optimized = True
+
+            except Exception as e:
+                logger.error(f"Error during generation: {str(e)}")
+                raise HTTPException(status_code=500, detail=str(e))
+        # Save synthetic data
+        synthetic_file_path = self.synthetic_dir / f"synthetic_{data_request.id}.csv"
+        logger.info(f"Saving synthetic data to {synthetic_file_path}")  
+        synthetic_data.to_csv(synthetic_file_path, index=False)
+        # Update request status
+        data_request.status = "completed"
+        data_request.synthetic_file_path = str(synthetic_file_path)
+        data_request.quality_score = quality_score
+        
+        
 
     async def search_best_hyperparameters(
         self,
@@ -39,18 +186,18 @@ class AIProcessingService:
         n_random: int = 5
     ) -> Tuple[Any, Dict[str, Any], float]:
         """
-        Recherche les meilleurs hyperparamètres pour le modèle
+        Search for optimal hyperparameters for the model
         
         Args:
-            data: DataFrame contenant les données d'entraînement
-            params: Paramètres de la requête
-            search_type: Type de recherche ("grid" ou "random")
-            n_random: Nombre d'essais pour la recherche aléatoire
+            data: DataFrame containing training data
+            params: Request parameters
+            search_type: Search type ("grid" or "random")
+            n_random: Number of trials for random search
             
         Returns:
-            Tuple contenant (meilleur_modèle, meilleurs_paramètres, meilleur_score)
+            Tuple containing (best_model, best_parameters, best_score)
         """
-        # Grille de paramètres à tester
+        # Parameter grid to test
         param_grid = {
             'epochs': [300, 500, 1000],
             'batch_size': [500, 1000, 2000],
@@ -62,14 +209,14 @@ class AIProcessingService:
         best_model = None
         tested_combinations = []
 
-        # Générer les combinaisons de paramètres
+        # Generate parameter combinations
         param_combinations = self._generate_param_combinations(
             param_grid, search_type, n_random
         )
 
-        print(f"Testing {len(param_combinations)} parameter combinations...")
+        logger.info(f"Testing {len(param_combinations)} parameter combinations...")
 
-        # Tester chaque combinaison
+        # Test each combination
         for i, (epochs, batch_size, learning_rate) in enumerate(param_combinations):
             current_params = {
                 "epochs": epochs,
@@ -77,10 +224,10 @@ class AIProcessingService:
                 "learning_rate": learning_rate
             }
             
-            print(f"Testing combination {i+1}/{len(param_combinations)}: {current_params}")
+            logger.info(f"Testing combination {i+1}/{len(param_combinations)}: {current_params}")
             
             try:
-                # Créer et entraîner le modèle
+                # Create and train model
                 model = get_model_wrapper(
                     model_type=params.model_type,
                     hyperparameters=current_params
@@ -89,7 +236,7 @@ class AIProcessingService:
                 await model.train(data)
                 synthetic_data = await model.generate(len(data))
                 
-                # Évaluer la qualité
+                # Evaluate quality
                 quality_score = self.quality_validator.evaluate(
                     real_data=data,
                     synthetic_data=synthetic_data
@@ -100,26 +247,26 @@ class AIProcessingService:
                     'score': quality_score
                 })
 
-                print(f"Quality score: {quality_score:.4f}")
+                logger.info(f"Quality score: {quality_score:.4f}")
 
-                # Vérifier si c'est le meilleur score
+                # Check if this is the best score
                 if quality_score > best_score:
                     best_score = quality_score
                     best_params = current_params.copy()
                     best_model = model
-                    print(f"New best score: {quality_score:.4f}")
+                    logger.info(f"New best score: {quality_score:.4f}")
 
             except Exception as e:
-                print(f"Error testing parameters {current_params}: {str(e)}")
+                logger.error(f"Error testing parameters {current_params}: {str(e)}")
                 continue
 
         if best_model is None:
             raise HTTPException(
                 status_code=500,
-                detail="Aucune combinaison de paramètres n'a fonctionné"
+                detail="No parameter combination worked successfully"
             )
 
-        print(f"Best parameters found: {best_params} with score: {best_score:.4f}")
+        logger.info(f"Best parameters found: {best_params} with score: {best_score:.4f}")
         return best_model, best_params, best_score
 
     def _generate_param_combinations(
@@ -129,198 +276,285 @@ class AIProcessingService:
         n_random: int
     ) -> List[Tuple]:
         """
-        Génère les combinaisons de paramètres selon le type de recherche
+        Generate parameter combinations based on search type
         
         Args:
-            param_grid: Grille des paramètres
-            search_type: Type de recherche
-            n_random: Nombre d'essais aléatoires
+            param_grid: Parameter grid
+            search_type: Search type
+            n_random: Number of random trials
             
         Returns:
-            Liste des combinaisons de paramètres
+            List of parameter combinations
         """
         if search_type == "random":
-            # Sélection aléatoire de combinaisons
+            # Random selection of combinations
             all_combinations = list(product(*param_grid.values()))
             if len(all_combinations) <= n_random:
                 return all_combinations
             return random.sample(all_combinations, n_random)
         else:
-            # Grid search - toutes les combinaisons
+            # Grid search - all combinations
             return list(product(*param_grid.values()))
+
+    @asynccontextmanager
+    async def _handle_request_status(self, db: Session, data_request: DataRequest):
+        """Context manager to handle request status updates"""
+        try:
+            data_request.status = "processing"
+            db.commit()
+            yield
+            data_request.status = "completed"
+            db.commit()
+        except Exception as e:
+            data_request.status = "failed"
+            data_request.error_message = str(e)
+            db.commit()
+            raise
 
     async def process_generation_request(
         self, 
         db: Session,
         request_id: int,
         current_user_id: Optional[int] = None
-    ):
-        """Traite une requête de génération de données avec optimisation optionnelle"""
-        data_request = None
+    ) -> Dict[str, Any]:
+        """Process a data generation request with optional optimization"""
         
         try:
-            # Récupérer la requête et ses paramètres
-            data_request = db.query(DataRequest).filter(DataRequest.id == request_id).first()
+            # Retrieve request and parameters
+            data_request = db.query(DataRequest).options(
+                joinedload(DataRequest.request_parameters)
+            ).filter(DataRequest.id == request_id).first()
+            
             if not data_request:
-                raise HTTPException(status_code=404, detail="Requête non trouvée")
+                raise HTTPException(status_code=404, detail="Request not found")
 
-            # Vérifier si le fichier existe
+            # Verify file exists
             dataset_path = self.dataset_dir / data_request.dataset_name
             if not dataset_path.exists():
                 raise HTTPException(
                     status_code=404, 
-                    detail=f"Dataset non trouvé: {dataset_path}"
+                    detail=f"Dataset not found: {dataset_path}"
                 )
 
-            # Charger les paramètres
-            params = data_request.parameters
+            # Load parameters
+            params = data_request.request_parameters
             if not params:
                 raise HTTPException(
                     status_code=400,
-                    detail="Paramètres non trouvés pour la requête"
+                    detail="Parameters not found for request"
                 )
 
-            # Mettre à jour le statut de la requête
-            data_request.status = "processing"
-            db.commit()
+            async with self._handle_request_status(db, data_request):
+                # Load original data
+                original_data = pd.read_csv(dataset_path)
+                logger.info(f"Loaded dataset with {len(original_data)} rows and {len(original_data.columns)} columns")
 
-            # Charger les données d'origine
-            original_data = pd.read_csv(dataset_path)
-            print(f"Loaded dataset with {len(original_data)} rows and {len(original_data.columns)} columns")
-
-            # Variables pour stocker les résultats
-            model = None
-            synthetic_data = None
-            quality_score = None
-            optimized = False
-
-            # Vérifier si l'optimisation est activée
-            if params.optimization_enabled:
-                print("Starting hyperparameter optimization...")
-                optimized = True
-                
-                # Mode optimisation
-                model, best_params, quality_score = await self.search_best_hyperparameters(
-                    data=original_data,
-                    params=params,
-                    search_type=params.optimization_search_type or "grid",
-                    n_random=params.optimization_n_trials or 5
-                )
-                
-                # Mettre à jour les paramètres avec les meilleurs trouvés
-                params.epochs = best_params["epochs"]
-                params.batch_size = best_params["batch_size"]
-                params.learning_rate = best_params["learning_rate"]
-                db.commit()
-                
-                # Générer les données avec le meilleur modèle
-                synthetic_data = await model.generate(len(original_data))
-                
-            else:
-                print("Using standard hyperparameters...")
-                # Mode normal sans optimisation
-                model = get_model_wrapper(
-                    model_type=params.model_type,
-                    hyperparameters={
-                        "epochs": params.epochs,
-                        "batch_size": params.batch_size,
-                        "learning_rate": params.learning_rate
-                    }
-                )
-
-                # Entraîner le modèle
-                await model.train(original_data)
-
-                # Générer les données synthétiques
-                synthetic_data = await model.generate(len(original_data))
-
-                # Évaluer la qualité
-                quality_score = self.quality_validator.evaluate(
-                    real_data=original_data,
-                    synthetic_data=synthetic_data
-                )
-
-            # Créer le chemin de sortie
-            output_filename = f"{request_id}_synthetic_data.csv"
-            output_path = self.synthetic_dir / output_filename
-
-            # Sauvegarder les résultats
-            synthetic_data.to_csv(output_path, index=False)
-            print(f"Synthetic data saved to: {output_path}")
-            
-            # Mettre à jour le statut de la requête
-            data_request.status = "completed"
-            db.commit()
-
-            # Sauvegarder le dataset synthétique
-            self.dataset_service.save_generated_data(
-                db=db,
-                request_id=request_id,
-                file_path=str(output_path),
-                user_id=current_user_id,
-            )
-
-            # Après la génération réussie et la sauvegarde
-            if quality_score:
-                self.notification_service.create_generation_success_notification(
-                    db=db,
-                    user_id=current_user_id,
-                    request_id=request_id,
-                    quality_score=quality_score
-                )
-
-            result = {
-                "request_id": request_id,
-                "quality_score": round(quality_score, 4) if quality_score else None,
-                "output_path": str(output_path),
-                "optimized": optimized,
-                "final_parameters": {
+                # Initialize variables
+                model = None
+                synthetic_data = None
+                quality_score = None
+                optimized = False
+                best_params = {
                     "epochs": params.epochs,
                     "batch_size": params.batch_size,
-                    "learning_rate": params.learning_rate,
-                    "model_type": params.model_type
-                },
-                "notification_created": True
-            }
+                    "learning_rate": params.learning_rate
+                }
 
-            print(f"Request {request_id} completed successfully")
-            return result
+                # Check if optimization is enabled
+                if params.optimization_enabled:
+                    logger.info("Starting hyperparameter optimization...")
+                    optimized = True
+                    
+                    try:
+                        # Optimization mode
+                        model, optimization_results, quality_score = await self.search_best_hyperparameters(
+                            data=original_data,
+                            params=params,
+                            search_type=params.optimization_method or "grid",
+                            n_random=params.optimization_n_trials or 5
+                        )
+                        
+                        # Update best_params with optimization results
+                        if optimization_results:
+                            best_params.update(optimization_results)
+                            
+                            # Update parameters with best found
+                            params.epochs = best_params["epochs"]
+                            params.batch_size = best_params["batch_size"]
+                            params.learning_rate = best_params["learning_rate"]
+                            db.commit()
+                        
+                        # Generate data with best model
+                        synthetic_data = await model.generate(len(original_data))
+                        
+                    except Exception as opt_error:
+                        logger.warning(f"Optimization failed, using default parameters: {str(opt_error)}")
+                        optimized = False
+                        # Fall back to default parameters
+                        model = get_model_wrapper(
+                            model_type=params.model_type,
+                            hyperparameters=best_params
+                        )
+                        
+                if not optimized:
+                    logger.info("Using standard hyperparameters...")
+                    # Normal mode without optimization
+                    model = get_model_wrapper(
+                        model_type=params.model_type,
+                        hyperparameters=best_params
+                    )
 
+                # Train model (if not already trained during optimization)
+                if not optimized:
+                    await model.train(original_data)
+
+                # Generate synthetic data (if not already generated during optimization)
+                if synthetic_data is None:
+                    synthetic_data = await model.generate(len(original_data))
+
+                # Evaluate quality (if not already evaluated during optimization)
+                if quality_score is None:
+                    quality_score = self.quality_validator.evaluate(
+                        real_data=original_data,
+                        synthetic_data=synthetic_data
+                    )
+
+                # Create output path
+                output_filename = f"{request_id}_synthetic_data.csv"
+                output_path = self.synthetic_dir / output_filename
+
+                # Save results locally first
+                synthetic_data.to_csv(output_path, index=False)
+                logger.info(f"Synthetic data saved locally to: {output_path}")
+
+                # Upload to Supabase Storage
+                supabase_path = f"synthetic/{current_user_id}/{output_filename}"
+                upload_result = None
+                download_url = None
+                
+                logger.info(f"🔄 Attempting to upload to Supabase: {supabase_path}")
+                
+                try:
+                    with open(output_path, 'rb') as file:
+                        logger.info(f"📁 File size: {os.path.getsize(output_path)} bytes")
+                        
+                        upload_result = await self.storage_service.upload_file(
+                            file_path=supabase_path,
+                            file_data=file,
+                            content_type="text/csv"
+                        )
+                    
+                    if upload_result:
+                        logger.info(f"✅ Upload successful to: {upload_result}")
+                        
+                        # Generate download URL
+                        download_url = await self.storage_service.get_download_url(
+                            file_path=supabase_path,
+                            expires_in=7 * 24 * 3600  # 7 days
+                        )
+                        
+                        if download_url:
+                            logger.info(f"✅ Download URL generated successfully")
+                            
+                            # Update DataRequest with Supabase info
+                            data_request.supabase_url = download_url
+                            data_request.output_file_path = supabase_path
+                            db.commit()
+                            
+                            logger.info(f"✅ Database updated with Supabase info")
+                        else:
+                            logger.error("❌ Failed to generate download URL")
+                    else:
+                        logger.error("❌ Upload to Supabase failed")
+                        
+                except Exception as upload_error:
+                    logger.error(f"❌ Supabase upload error: {str(upload_error)}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+                    # Continue with local file as fallback
+
+                # Save synthetic dataset metadata
+                synthetic_dataset = self.dataset_service.save_generated_data(
+                    db=db,
+                    request_id=request_id,
+                    file_path=str(output_path),
+                    user_id=current_user_id,
+                    supabase_path=supabase_path if upload_result else None,
+                    download_url=download_url if upload_result else None
+                )
+
+                # Create success notification
+                notification_created = False
+                if quality_score:
+                    try:
+                        self.notification_service.create_generation_success_notification(
+                            db=db,
+                            user_id=current_user_id,
+                            request_id=request_id,
+                            quality_score=quality_score
+                        )
+                        notification_created = True
+                    except Exception as e:
+                        logger.error(f"Failed to create notification: {str(e)}")
+
+                result = {
+                    "request_id": request_id,
+                    "quality_score": round(quality_score, 4) if quality_score else None,
+                    "output_path": str(output_path),
+                    "supabase_path": supabase_path if upload_result else None,
+                    "download_url": download_url if upload_result else None,
+                    "optimized": optimized,
+                    "final_parameters": {
+                        "epochs": best_params["epochs"],
+                        "batch_size": best_params["batch_size"],
+                        "learning_rate": best_params["learning_rate"],
+                        "model_type": params.model_type
+                    },
+                    "notification_created": notification_created
+                }
+
+                logger.info(f"Request {request_id} completed successfully")
+                return result
+
+        except HTTPException:
+            raise
         except Exception as e:
-            print(f"Error processing request {request_id}: {str(e)}")
-            if data_request:
-                data_request.status = "failed"
-                db.commit()
+            logger.error(f"Error processing request {request_id}: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
 
     async def get_processing_status(self, db: Session, request_id: int) -> Dict[str, Any]:
         """
-        Récupère le statut de traitement d'une requête
+        Get processing status of a request
         
         Args:
-            db: Session de base de données
-            request_id: ID de la requête
+            db: Database session
+            request_id: Request ID
             
         Returns:
-            Dictionnaire contenant le statut et les informations de la requête
+            Dictionary containing status and request information
         """
         data_request = db.query(DataRequest).filter(DataRequest.id == request_id).first()
         if not data_request:
-            raise HTTPException(status_code=404, detail="Requête non trouvée")
+            raise HTTPException(status_code=404, detail="Request not found")
             
+        # Safely access nested attributes
+        params = data_request.request_parameters
+        optimization_enabled = params.optimization_enabled if params else False
+        
         return {
             "request_id": request_id,
             "status": data_request.status,
             "created_at": data_request.created_at,
             "updated_at": data_request.updated_at,
             "dataset_name": data_request.dataset_name,
+            "error_message": getattr(data_request, 'error_message', None),
             "parameters": {
-                "model_type": data_request.parameters.model_type if data_request.parameters else None,
-                "epochs": data_request.parameters.epochs if data_request.parameters else None,
-                "batch_size": data_request.parameters.batch_size if data_request.parameters else None,
-                "learning_rate": data_request.parameters.learning_rate if data_request.parameters else None,
-                "optimization_enabled": data_request.parameters.optimization.enabled if data_request.parameters and data_request.parameters.optimization else False,
-                "optimization_search_type": data_request.parameters.optimization_search_type if data_request.parameters else None,
-                "optimization_n_trials": data_request.parameters.optimization_n_trials if data_request.parameters else None
+                "model_type": params.model_type if params else None,
+                "epochs": params.epochs if params else None,
+                "batch_size": params.batch_size if params else None,
+                "learning_rate": params.learning_rate if params else None,
+                "optimization_enabled": optimization_enabled,
+                "optimization_search_type": params.optimization_method if params else None,
+                "optimization_n_trials": params.optimization_n_trials if params else None
             }
         }

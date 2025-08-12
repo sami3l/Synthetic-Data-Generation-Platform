@@ -7,6 +7,8 @@ class OptimizationConfig(BaseModel):
     n_trials: Optional[int] = 5  # Nombre d'essais pour la recherche aléatoire
 
 class RequestParametersCreate(BaseModel):
+    model_config = {"protected_namespaces": ()}
+    
     model_type: str
     epochs: Optional[int] = 300
     batch_size: Optional[int] = 500
