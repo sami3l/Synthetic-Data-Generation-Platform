@@ -55,9 +55,9 @@ app.add_middleware(LoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "exp://192.168.11.156:8081",
+        "exp://192.168.11.176:8081",
         "http://localhost:8081",
-        "http://192.168.11.156:8081",
+        "http://192.168.11.176:8081",
         "*"
     ],
     allow_credentials=True,

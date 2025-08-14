@@ -8,11 +8,11 @@ import NavigationService from '../NavigationService';
 let isRedirecting = false;
 
 // Utiliser l'IP correcte de votre machine
-const baseURL = 'http://192.168.11.156:8000';
+const baseURL = 'http://192.168.11.176:8000';
 
 export const axiosInstance = axios.create({
     baseURL,
-    timeout: 30000, // 30 secondes timeout pour les requêtes normales
+    timeout: 30000, 
     headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
@@ -22,7 +22,7 @@ export const axiosInstance = axios.create({
 // Instance spéciale pour les requêtes de génération (longues)
 export const axiosInstanceLongTimeout = axios.create({
     baseURL,
-    timeout: 600000, // 10 minutes pour les opérations de génération
+    timeout: 600000,
     headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
