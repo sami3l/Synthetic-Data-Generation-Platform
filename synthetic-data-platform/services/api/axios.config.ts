@@ -7,8 +7,8 @@ import NavigationService from '../NavigationService';
 // Variable pour éviter les redirections multiples
 let isRedirecting = false;
 
-// Utiliser l'IP correcte de votre machine
-const baseURL = 'http://192.168.11.176:8000';
+// Utiliser la variable d'environnement ou fallback
+const baseURL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8000';
 
 export const axiosInstance = axios.create({
     baseURL,

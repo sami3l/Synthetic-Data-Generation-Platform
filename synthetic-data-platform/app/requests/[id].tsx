@@ -33,6 +33,7 @@ interface DataRequest {
   status: 'pending' | 'approved' | 'rejected' | 'processing' | 'completed' | 'failed' | 'cancelled';
   created_at: string;
   updated_at: string;
+  uploaded_dataset_id?: number; // Ajout de ce champ pour l'ID du dataset
   // NOUVEAUX CHAMPS
   approved_by?: {
     id: number;
@@ -230,8 +231,7 @@ export default function RequestDetailsScreen() {
       };
 
       console.log('💾 [RequestDetails] Sauvegarde:', updateData);
-      
-      // Appel API pour mettre à jour la requête
+     
       await dataService.updateDataRequest(Number(id), updateData);
 
       Toast.show({
@@ -269,23 +269,42 @@ export default function RequestDetailsScreen() {
             try {
               setIsGenerating(true);
               
-              // const generationData = {
-              //   request_id: request.id,
-              //   model_type: formData.model_type,
-              //   n_samples: formData.sample_size,
-              //   epochs: formData.epochs,
-              //   batch_size: formData.batch_size,
-              //   learning_rate: formData.learning_rate,
-              //   optimization_enabled: formData.optimization_method !== 'none',
-              //   optimization_search_type: formData.optimization_method === 'none' ? 'grid' : formData.optimization_method,
-              //   optimization_n_trials: formData.n_trials,
-              //   hyperparameters: formData.optimization_method !== 'none' ? ['epochs', 'batch_size'] : []
-              // };
-
-              // console.log('🚀 [RequestDetails] Démarrage génération:', generationData);
+              // Récupérer les datasets disponibles pour obtenir un ID valide
+              let datasetId = request.uploaded_dataset_id;
+              if (!datasetId) {
+                try {
+                  const datasets = await dataService.getUploadedDatasets();
+                  if (datasets.length > 0) {
+                    datasetId = datasets[0].id; 
+                    console.log('🔍 [RequestDetails] Dataset automatique:', datasetId);
+                  } else {
+                    throw new Error('Aucun dataset disponible. Veuillez d\'abord uploader un dataset.');
+                  }
+                } catch (datasetError) {
+                  console.error('Erreur récupération datasets:', datasetError);
+                  throw new Error('Impossible de récupérer les datasets disponibles.');
+                }
+              }
               
-              // Use the working dataService.generateData endpoint
-              const result = await dataService.generateSyntheticData(Number(id));
+              const generationConfig = {
+                dataset_id: datasetId,
+                model_type: formData.model_type,
+                sample_size: formData.sample_size,
+                mode: formData.optimization_method !== 'none' ? 'optimization' : 'simple' as 'simple' | 'optimization',
+                epochs: formData.epochs,
+                batch_size: formData.batch_size,
+                learning_rate: formData.learning_rate,
+                generator_lr: formData.learning_rate, // Utiliser le même learning rate pour le générateur
+                discriminator_lr: formData.learning_rate, // Utiliser le même learning rate pour le discriminateur
+                optimization_method: formData.optimization_method !== 'none' ? formData.optimization_method as 'grid' | 'random' | 'bayesian' : undefined,
+                n_trials: formData.optimization_method !== 'none' ? formData.n_trials : undefined,
+                hyperparameters: formData.optimization_method !== 'none' ? ['epochs', 'batch_size', 'learning_rate'] : undefined
+              };
+
+              console.log('🚀 [RequestDetails] Démarrage génération avec config:', generationConfig);
+              
+              // Utiliser la nouvelle signature de generateSyntheticData
+              const result = await dataService.generateSyntheticData(Number(id), generationConfig);
               
               console.log('✅ [RequestDetails] Génération démarrée:', result);
               
@@ -330,24 +349,34 @@ export default function RequestDetailsScreen() {
     }
 
     try {
-      // Récupérer l'URL de téléchargement depuis le backend
-      const downloadData = await dataService.getDownloadUrl(request.id);
+      // Étape 1: Obtenir un token de téléchargement temporaire
+      console.log('🔑 Génération du token de téléchargement...');
+      const tokenResponse = await dataService.getDownloadToken(request.id);
       
-      if (downloadData.download_url) {
-        // Ouvrir l'URL dans le navigateur pour le téléchargement
-        const supported = await Linking.canOpenURL(downloadData.download_url);
+      if (tokenResponse.download_url) {
+        console.log('🔗 URL de téléchargement avec token:', tokenResponse.download_url);
+        
+        // Étape 2: Utiliser l'URL avec token (pas besoin d'authentification)
+        const supported = await Linking.canOpenURL(tokenResponse.download_url);
         if (supported) {
-          await Linking.openURL(downloadData.download_url);
+          await Linking.openURL(tokenResponse.download_url);
           Toast.show({
             type: 'success',
             text1: 'Téléchargement démarré',
-            text2: 'Le fichier va être téléchargé'
+            text2: `Le fichier va être téléchargé (token valide ${tokenResponse.expires_in_minutes} minutes)`
           });
         } else {
-          Alert.alert('Erreur', 'Impossible d\'ouvrir le lien de téléchargement');
+          // Si Linking ne fonctionne pas, proposer le lien à copier
+          Alert.alert(
+            'Lien de téléchargement',
+            `Copiez ce lien dans votre navigateur :\n\n${tokenResponse.download_url}\n\n(Valide ${tokenResponse.expires_in_minutes} minutes)`,
+            [
+              { text: 'OK', style: 'default' }
+            ]
+          );
         }
       } else {
-        Alert.alert('Erreur', 'URL de téléchargement non disponible');
+        Alert.alert('Erreur', 'Impossible de générer le token de téléchargement');
       }
     } catch (error: any) {
       console.error('Erreur lors du téléchargement:', error);

@@ -135,9 +135,25 @@ class DataService {
   /**
    * Démarrer la génération de données synthétiques
    */
-  async generateSyntheticData(requestId: number): Promise<{ message: string; status: string }> {
+  async generateSyntheticData(
+    requestId: number,
+    generationConfig: {
+      dataset_id: number;
+      model_type: 'ctgan' | 'tvae';
+      sample_size: number;
+      mode: 'simple' | 'optimization';
+      epochs: number;
+      batch_size: number;
+      learning_rate: number;
+      generator_lr?: number;
+      discriminator_lr?: number;
+      optimization_method?: 'grid' | 'random' | 'bayesian';
+      n_trials?: number;
+      hyperparameters?: string[];
+    }
+  ): Promise<{ message: string; status: string }> {
     try {
-      const response = await axiosInstanceLongTimeout.post(`/data/generate/${requestId}`);
+      const response = await axiosInstanceLongTimeout.post(`/generation/v2/start`, generationConfig);
       return response.data;
     } catch (error: any) {
       console.error('Erreur lors du démarrage de la génération:', error);
@@ -232,6 +248,7 @@ class DataService {
    */
   async getDownloadUrl(requestId: number): Promise<{ download_url: string }> {
     try {
+      // Revenir à l'endpoint /data/requests pour utiliser la logique existante
       const response = await axiosInstance.get(`/data/requests/${requestId}/download`);
       return response.data;
     } catch (error: any) {
@@ -241,10 +258,42 @@ class DataService {
   }
 
   /**
+   * Récupérer l'URL de téléchargement direct (via notre backend)
+   */
+  async getDirectDownloadUrl(requestId: number): Promise<string> {
+    try {
+      const response = await axiosInstance.get(`/data/requests/${requestId}/download-direct`, {
+        responseType: 'blob'
+      });
+      
+      // Créer un blob URL pour le téléchargement
+      const blob = new Blob([response.data]);
+      return URL.createObjectURL(blob);
+    } catch (error: any) {
+      console.error('Erreur lors du téléchargement direct:', error);
+      throw new Error(error.response?.data?.detail || 'Erreur lors du téléchargement direct');
+    }
+  }
+
+  /**
+   * Obtenir un token de téléchargement temporaire
+   */
+  async getDownloadToken(requestId: number): Promise<{download_token: string, download_url: string, expires_in_minutes: number}> {
+    try {
+      const response = await axiosInstance.get(`/data/requests/${requestId}/download-token`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Erreur lors de la génération du token de téléchargement:', error);
+      throw new Error(error.response?.data?.detail || 'Impossible de générer le token de téléchargement');
+    }
+  }
+
+  /**
    * Télécharger directement les données synthétiques (pour navigation web)
    */
   async downloadSyntheticData(requestId: number, format: string = 'csv'): Promise<void> {
     try {
+      // Revenir à l'endpoint /data/requests pour utiliser la logique existante
       const response = await axiosInstance.get(`/data/requests/${requestId}/download`, {
         params: { format },
         responseType: 'blob'

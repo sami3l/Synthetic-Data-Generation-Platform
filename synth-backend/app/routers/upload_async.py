@@ -5,6 +5,7 @@ from app.db.database import get_async_db
 from app.models.UploadedDataset import UploadedDataset
 from app.models.user import User
 from app.dependencies.auth import get_current_user
+from app.services.SimpleSupabaseStorage import SimpleSupabaseStorage
 from pydantic import BaseModel
 import logging
 import pandas as pd
@@ -14,6 +15,9 @@ import os
 from typing import Optional
 
 router = APIRouter(prefix="/datasets", tags=["Datasets Upload"])
+
+# Initialiser le service de stockage Supabase
+storage = SimpleSupabaseStorage()
 
 # Schema pour la mise à jour des datasets
 class DatasetUpdateRequest(BaseModel):
@@ -148,12 +152,36 @@ async def upload_dataset(
         # Générer un nom de fichier unique
         unique_filename = f"dataset_{user.id}_{uuid.uuid4().hex[:8]}_{file.filename}"
         
+        # Uploader le fichier vers Supabase Storage
+        storage_path = f"uploads/{user.id}/{unique_filename}"
+        
+        # Déterminer le content-type
+        content_type = "application/octet-stream"
+        if file.filename:
+            if file.filename.endswith('.csv'):
+                content_type = "text/csv"
+            elif file.filename.endswith(('.xlsx', '.xls')):
+                content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        
+        # Convertir bytes en BinaryIO
+        file_obj = io.BytesIO(content)
+        success_path = await storage.upload_file(storage_path, file_obj, content_type)
+        
+        if not success_path:
+            logger.error(f"Failed to upload file to Supabase: {storage_path}")
+            raise HTTPException(
+                status_code=500,
+                detail="Erreur lors de la sauvegarde du fichier"
+            )
+        
+        logger.info(f"File uploaded to Supabase: {storage_path}")
+        
         # Créer l'enregistrement en base de données
         uploaded_dataset = UploadedDataset(
             user_id=user.id,
             original_filename=file.filename,
             unique_filename=unique_filename,
-            file_path=f"/uploads/{user.id}/{unique_filename}",
+            file_path=storage_path,  # Utiliser file_path pour stocker le chemin Supabase
             file_size=file_size,
             n_rows=n_rows,
             n_columns=n_columns,
@@ -185,8 +213,22 @@ async def upload_dataset(
         }
         
     except HTTPException:
+        # En cas d'erreur HTTP, supprimer le fichier de Supabase si il a été uploadé
+        if 'storage_path' in locals():
+            try:
+                await storage.delete_file(storage_path)
+                logger.info(f"Cleaned up file from Supabase: {storage_path}")
+            except Exception as cleanup_error:
+                logger.error(f"Failed to cleanup file: {cleanup_error}")
         raise
     except Exception as e:
+        # En cas d'erreur générale, supprimer le fichier de Supabase si il a été uploadé
+        if 'storage_path' in locals():
+            try:
+                await storage.delete_file(storage_path)
+                logger.info(f"Cleaned up file from Supabase: {storage_path}")
+            except Exception as cleanup_error:
+                logger.error(f"Failed to cleanup file: {cleanup_error}")
         logger.error(f"Upload error: {str(e)}")
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'upload: {str(e)}")
@@ -286,6 +328,64 @@ async def update_dataset(
         await db.rollback()
         raise HTTPException(status_code=500, detail="Erreur lors de la mise à jour")
 
+@router.get("/{dataset_id}/download")
+async def download_dataset(
+    dataset_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Télécharger un dataset depuis Supabase Storage
+    """
+    from fastapi.responses import StreamingResponse
+    
+    try:
+        # Vérifier que le dataset appartient à l'utilisateur
+        result = await db.execute(
+            select(UploadedDataset)
+            .where(
+                UploadedDataset.id == dataset_id,
+                UploadedDataset.user_id == current_user.id
+            )
+        )
+        dataset = result.scalar_one_or_none()
+        
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset non trouvé ou non autorisé")
+        
+        # Télécharger le fichier depuis Supabase
+        file_content = await storage.download_file(dataset.file_path)
+        
+        if not file_content:
+            raise HTTPException(status_code=404, detail="Fichier non trouvé dans le stockage")
+        
+        # Déterminer le type de contenu
+        content_type = "application/octet-stream"
+        if dataset.original_filename:
+            if dataset.original_filename.endswith('.csv'):
+                content_type = "text/csv"
+            elif dataset.original_filename.endswith(('.xlsx', '.xls')):
+                content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        
+        # Créer une réponse de streaming
+        def iter_file():
+            yield file_content
+        
+        return StreamingResponse(
+            iter_file(),
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f"attachment; filename={dataset.original_filename}",
+                "Content-Length": str(len(file_content))
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erreur lors du téléchargement du dataset: {str(e)}")
+        raise HTTPException(status_code=500, detail="Erreur lors du téléchargement")
+
 @router.delete("/{dataset_id}")
 async def delete_dataset(
     dataset_id: int,
@@ -309,13 +409,16 @@ async def delete_dataset(
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset non trouvé ou non autorisé")
         
-        # Supprimer le fichier physique si il existe
-        if dataset.file_path and os.path.exists(dataset.file_path):
+        # Supprimer le fichier de Supabase Storage
+        if dataset.file_path:
             try:
-                os.remove(dataset.file_path)
-                logger.info(f"Fichier physique supprimé: {dataset.file_path}")
+                success = await storage.delete_file(dataset.file_path)
+                if success:
+                    logger.info(f"Fichier supprimé de Supabase: {dataset.file_path}")
+                else:
+                    logger.warning(f"Échec de la suppression du fichier Supabase: {dataset.file_path}")
             except Exception as file_error:
-                logger.warning(f"Impossible de supprimer le fichier physique: {file_error}")
+                logger.warning(f"Erreur lors de la suppression du fichier Supabase: {file_error}")
                 # On continue même si la suppression du fichier échoue
         
         # Supprimer l'enregistrement de la base de données

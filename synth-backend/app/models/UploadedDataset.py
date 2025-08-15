@@ -39,5 +39,5 @@ class UploadedDataset(Base):
     
     # Relations
     user = relationship("User", back_populates="uploaded_datasets")
-    # data_requests = relationship("DataRequest", back_populates="uploaded_dataset")  # Temporairement commenté
+    data_requests = relationship("DataRequest", back_populates="uploaded_dataset")
 

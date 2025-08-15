@@ -7,3 +7,11 @@ synth-backend/.env.example
 synth-backend/requirements.txt
 synth-backend/requirements.txt
 synthetic-data-platform/.env
+ENV_SETUP.md
+synth-backend/alembic/versions/124e1d324af3_uploaded_dataset.py
+synth-backend/alembic/versions/__pycache__/ac8e9bc4ff05_add_download_token_fields_to_synthetic_.cpython-312.pyc
+synth-backend/alembic/versions/__pycache__/124e1d324af3_uploaded_dataset.cpython-312.pyc
+synth-backend/alembic/versions/ac8e9bc4ff05_add_download_token_fields_to_synthetic_.py
+synth-backend/app/__pycache__/main.cpython-312.pyc
+synth-backend/app/ai/services/__pycache__/AIProcessingService.cpython-312.pyc
+synth-backend/SUPABASE_MIGRATION.md

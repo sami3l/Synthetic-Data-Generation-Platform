@@ -2,6 +2,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session, joinedload
 import pandas as pd
 import os
+import io
 import random
 from pathlib import Path
 from itertools import product
@@ -11,12 +12,13 @@ from contextlib import asynccontextmanager
 
 from app.models.DataRequest import DataRequest
 from app.models.RequestParameters import RequestParameters
+from app.models.UploadedDataset import UploadedDataset
 from app.ai.services.quality_validator import QualityValidator
 from app.ai.models.model_factory import get_model_wrapper
 from app.services.DataRequestService import DataRequestService
 from app.services.DatasetService import DatasetService
 from app.services.NotificationService import NotificationService
-from app.services.SupabaseStorageService import SupabaseStorageService
+from app.services.SimpleSupabaseStorage import SimpleSupabaseStorage
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,9 +38,9 @@ class AIProcessingService:
         self.dataset_service = DatasetService()
         self.request_service = DataRequestService()
         self.notification_service = NotificationService()
-        self.storage_service = SupabaseStorageService()
+        self.storage = SimpleSupabaseStorage()
         
-        # Define base paths
+        # Define base paths (kept for backward compatibility)
         self.base_path = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
         self.data_dir = self.base_path / "data"
         self.dataset_dir = self.data_dir / "datasets"
@@ -75,108 +77,14 @@ class AIProcessingService:
     ) -> Dict[str, Any]:
         """
         Generate synthetic data based on the provided parameters.
+        This method is deprecated - use process_generation_request instead.
         """
-        pass
-        # Retrieve request and parameters
-        data_request = db.query(DataRequest).options(
-            joinedload(DataRequest.request_parameters)
-        ).filter(DataRequest.id == request_id).first()
-        if not data_request:
-            raise HTTPException(status_code=404, detail="Request not found")
-        # Verify file exists
-        dataset_path = self.dataset_dir / data_request.dataset_name
-        if not dataset_path.exists():
-            raise HTTPException(
-                status_code=404, 
-                detail=f"Dataset not found: {dataset_path}"
-            )
-        # Load parameters
-        params = data_request.request_parameters
-
-        if not params:
-            raise HTTPException(
-                status_code=400,
-                detail="Parameters not found for request"
-            )
-        # Check if optimization is required
-        if optimize:
-            best_model, best_params, best_score = await self.search_best_hyperparameters(
-                data=pd.read_csv(dataset_path),
-                params=params
-            )
-
-        return {
-            "status": "success",
-            "data": {
-                "request_id": request_id,
-                "dataset_name": data_request.dataset_name,
-                "model_type": params.model_type,
-                "optimize": optimize,
-                "search_type": search_type,
-                "n_random": n_random
-            },
-            "optimized": optimize,
-            "best_params": best_params,
-            "best_score": best_score
-        }
-        # Load original data
-        original_data = pd.read_csv(dataset_path)
-        logger.info(f"Loaded dataset with {len(original_data)} rows and {len(original_data.columns)} columns")
-        # Initialize variables
-        model = None
-        synthetic_data = None
-        quality_score = None
-        optimized = False
-        best_params = None  
-        best_score = -float('inf')
-        # Handle request status
-        async with self._handle_request_status(db, data_request):
-            try:
-                # Create model wrapper
-                model = get_model_wrapper(
-                    model_type=params.model_type,
-                    hyperparameters=params.hyperparameters
-                )
-                logger.info(f"Model created: {model}")
-
-                # Train the model
-                await model.train(original_data)
-                logger.info("Model training completed")
-
-                # Generate synthetic data
-                synthetic_data = await model.generate(len(original_data))
-                logger.info(f"Generated synthetic data with {len(synthetic_data)} rows")
-
-                # Evaluate quality
-                quality_score = self.quality_validator.evaluate(
-                    real_data=original_data,
-                    synthetic_data=synthetic_data
-                )
-                logger.info(f"Quality score: {quality_score:.4f}")
-
-                # Check if optimization is required
-                if optimize:
-                    best_model, best_params, best_score = await self.search_best_hyperparameters(
-                        data=synthetic_data,
-                        params=params,
-                        search_type=search_type,
-                        n_random=n_random
-                    )
-                    optimized = True
-
-            except Exception as e:
-                logger.error(f"Error during generation: {str(e)}")
-                raise HTTPException(status_code=500, detail=str(e))
-        # Save synthetic data
-        synthetic_file_path = self.synthetic_dir / f"synthetic_{data_request.id}.csv"
-        logger.info(f"Saving synthetic data to {synthetic_file_path}")  
-        synthetic_data.to_csv(synthetic_file_path, index=False)
-        # Update request status
-        data_request.status = "completed"
-        data_request.synthetic_file_path = str(synthetic_file_path)
-        data_request.quality_score = quality_score
-        
-        
+        # Redirect to the new method
+        return await self.process_generation_request(
+            db=db,
+            request_id=request_id,
+            current_user_id=current_user_id
+        )
 
     async def search_best_hyperparameters(
         self,
@@ -322,18 +230,25 @@ class AIProcessingService:
         try:
             # Retrieve request and parameters
             data_request = db.query(DataRequest).options(
-                joinedload(DataRequest.request_parameters)
+                joinedload(DataRequest.request_parameters),
+                joinedload(DataRequest.uploaded_dataset)
             ).filter(DataRequest.id == request_id).first()
             
             if not data_request:
                 raise HTTPException(status_code=404, detail="Request not found")
 
-            # Verify file exists
-            dataset_path = self.dataset_dir / data_request.dataset_name
-            if not dataset_path.exists():
+            # Get dataset storage path from uploaded_dataset relationship
+            uploaded_dataset = data_request.uploaded_dataset
+            logger.info(f"Data request ID: {data_request.id}")
+            logger.info(f"Uploaded dataset ID: {data_request.uploaded_dataset_id}")
+            logger.info(f"Uploaded dataset object: {uploaded_dataset}")
+            logger.info(f"File path: {uploaded_dataset.file_path if uploaded_dataset else 'None'}")
+            
+            if not uploaded_dataset or not uploaded_dataset.file_path:
+                logger.error(f"Dataset validation failed - uploaded_dataset: {uploaded_dataset}, file_path: {uploaded_dataset.file_path if uploaded_dataset else 'None'}")
                 raise HTTPException(
                     status_code=404, 
-                    detail=f"Dataset not found: {dataset_path}"
+                    detail="Dataset file path not found"
                 )
 
             # Load parameters
@@ -345,9 +260,18 @@ class AIProcessingService:
                 )
 
             async with self._handle_request_status(db, data_request):
-                # Load original data
-                original_data = pd.read_csv(dataset_path)
-                logger.info(f"Loaded dataset with {len(original_data)} rows and {len(original_data.columns)} columns")
+                # Load original data from Supabase Storage
+                logger.info(f"Loading dataset from Supabase: {uploaded_dataset.file_path}")
+                try:
+                    raw_bytes = await self.storage.download_file(uploaded_dataset.file_path)
+                    original_data = pd.read_csv(io.BytesIO(raw_bytes))
+                    logger.info(f"Loaded dataset with {len(original_data)} rows and {len(original_data.columns)} columns")
+                except Exception as e:
+                    logger.error(f"Failed to load dataset from Supabase: {str(e)}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to load dataset: {str(e)}"
+                    )
 
                 # Initialize variables
                 model = None
@@ -419,68 +343,48 @@ class AIProcessingService:
                         synthetic_data=synthetic_data
                     )
 
-                # Create output path
-                output_filename = f"{request_id}_synthetic_data.csv"
-                output_path = self.synthetic_dir / output_filename
-
-                # Save results locally first
-                synthetic_data.to_csv(output_path, index=False)
-                logger.info(f"Synthetic data saved locally to: {output_path}")
-
-                # Upload to Supabase Storage
-                supabase_path = f"synthetic/{current_user_id}/{output_filename}"
-                upload_result = None
-                download_url = None
-                
-                logger.info(f"🔄 Attempting to upload to Supabase: {supabase_path}")
+                # Upload synthetic data directly to Supabase Storage
+                output_rel_path = f"{current_user_id}/synthetic/{request_id}_synthetic_data.csv"
+                logger.info(f"Uploading synthetic data to Supabase: {output_rel_path}")
                 
                 try:
-                    with open(output_path, 'rb') as file:
-                        logger.info(f"📁 File size: {os.path.getsize(output_path)} bytes")
-                        
-                        upload_result = await self.storage_service.upload_file(
-                            file_path=supabase_path,
-                            file_data=file,
-                            content_type="text/csv"
-                        )
+                    # Convert DataFrame to CSV bytes
+                    buf = io.BytesIO()
+                    synthetic_data.to_csv(buf, index=False)
+                    buf.seek(0)  # Reset position for upload
                     
-                    if upload_result:
-                        logger.info(f"✅ Upload successful to: {upload_result}")
-                        
-                        # Generate download URL
-                        download_url = await self.storage_service.get_download_url(
-                            file_path=supabase_path,
-                            expires_in=7 * 24 * 3600  # 7 days
-                        )
-                        
-                        if download_url:
-                            logger.info(f"✅ Download URL generated successfully")
-                            
-                            # Update DataRequest with Supabase info
-                            data_request.supabase_url = download_url
-                            data_request.output_file_path = supabase_path
-                            db.commit()
-                            
-                            logger.info(f"✅ Database updated with Supabase info")
-                        else:
-                            logger.error("❌ Failed to generate download URL")
-                    else:
-                        logger.error("❌ Upload to Supabase failed")
-                        
+                    # Upload to Supabase
+                    supabase_path = await self.storage.upload_file(
+                        output_rel_path, 
+                        buf, 
+                        content_type="text/csv"
+                    )
+                    
+                    logger.info(f"✅ Upload successful to: {supabase_path}")
+                    
+                    # Generate download URL
+                    download_url = await self.storage.get_download_url(
+                        supabase_path, 
+                        expires_in=7 * 24 * 3600  # 7 days
+                    )
+                    
+                    logger.info(f"✅ Download URL generated successfully")
+                    
                 except Exception as upload_error:
                     logger.error(f"❌ Supabase upload error: {str(upload_error)}")
-                    import traceback
-                    logger.error(f"Traceback: {traceback.format_exc()}")
-                    # Continue with local file as fallback
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to upload synthetic data: {str(upload_error)}"
+                    )
 
                 # Save synthetic dataset metadata
                 synthetic_dataset = self.dataset_service.save_generated_data(
                     db=db,
                     request_id=request_id,
-                    file_path=str(output_path),
+                    file_path=supabase_path,  # Store Supabase storage path
                     user_id=current_user_id,
-                    supabase_path=supabase_path if upload_result else None,
-                    download_url=download_url if upload_result else None
+                    supabase_path=supabase_path,
+                    download_url=download_url
                 )
 
                 # Create success notification
@@ -500,9 +404,8 @@ class AIProcessingService:
                 result = {
                     "request_id": request_id,
                     "quality_score": round(quality_score, 4) if quality_score else None,
-                    "output_path": str(output_path),
-                    "supabase_path": supabase_path if upload_result else None,
-                    "download_url": download_url if upload_result else None,
+                    "supabase_path": supabase_path,
+                    "download_url": download_url,
                     "optimized": optimized,
                     "final_parameters": {
                         "epochs": best_params["epochs"],
