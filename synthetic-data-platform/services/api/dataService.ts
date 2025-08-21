@@ -39,6 +39,7 @@ export interface DataRequestWithParams {
   request: {
     request_name: string;
     dataset_name: string;
+    uploaded_dataset_id?: number;
   };
   params: {
     model_type: string;
@@ -112,10 +113,17 @@ class DataService {
    */
   async updateDataRequest(requestId: number, requestData: Partial<DataRequestWithParams>): Promise<DataRequest> {
     try {
-      const response = await axiosInstance.put(`/data/requests/${requestId}`, requestData);
+      // Si la requête contient un dataset_id, s'assurer qu'il est inclus dans la mise à jour
+      const finalRequestData = { ...requestData };
+      
+      // Log de debug
+      console.log('🔄 [dataService.updateDataRequest] Données à mettre à jour:', finalRequestData);
+      
+      // Effectuer la requête de mise à jour
+      const response = await axiosInstance.put(`/data/requests/${requestId}`, finalRequestData);
       return response.data;
     } catch (error: any) {
-      console.error('Erreur lors de la modification de la requête:', error);
+      console.error('❌ Erreur lors de la modification de la requête:', error);
       throw new Error(error.response?.data?.detail || 'Erreur lors de la modification de la requête');
     }
   }
@@ -136,7 +144,7 @@ class DataService {
    * Démarrer la génération de données synthétiques
    */
   async generateSyntheticData(
-    requestId: number,
+    requestId : number,
     generationConfig: {
       dataset_id: number;
       model_type: 'ctgan' | 'tvae';
@@ -153,7 +161,7 @@ class DataService {
     }
   ): Promise<{ message: string; status: string }> {
     try {
-      const response = await axiosInstanceLongTimeout.post(`/generation/v2/start`, generationConfig);
+      const response = await axiosInstanceLongTimeout.post(`/data/generate/${requestId}`, generationConfig);
       return response.data;
     } catch (error: any) {
       console.error('Erreur lors du démarrage de la génération:', error);
@@ -181,24 +189,39 @@ class DataService {
   /**
    * Récupérer les datasets uploadés
    */
-  async getUploadedDatasets(): Promise<UploadedDataset[]> {
+  async getUploadedDatasets(filename?: string): Promise<UploadedDataset[]> {
     try {
       console.log('🔄 Récupération des datasets via DataService...');
-      const response = await axiosInstance.get('/datasets/');
+      
+      // Utiliser l'endpoint correct pour récupérer tous les datasets
+      const response = await axiosInstance.get('/datasets');
       console.log('✅ Réponse DataService:', response.data);
       
       // Traiter la réponse selon son format
       const data = response.data;
+      let datasets: UploadedDataset[] = [];
+      
       if (Array.isArray(data)) {
-        return data;
+        datasets = data;
       } else if (data && Array.isArray(data.datasets)) {
-        return data.datasets;
+        datasets = data.datasets;
       } else if (data && Array.isArray(data.data)) {
-        return data.data;
+        datasets = data.data;
       } else {
         console.warn('Format de réponse inattendu dans DataService:', data);
         return [];
       }
+      
+      // Si un nom de fichier est spécifié, filtrer les datasets correspondants
+      if (filename) {
+        const lowercaseFilename = filename.toLowerCase();
+        return datasets.filter(dataset => 
+          dataset.original_filename && 
+          dataset.original_filename.toLowerCase().includes(lowercaseFilename)
+        );
+      }
+      
+      return datasets;
     } catch (error: any) {
       console.error('❌ Erreur DataService lors de la récupération des datasets:', error);
       

@@ -78,4 +78,15 @@ app.include_router(optimization.router)  # Router optimization activé
 app.include_router(stats.router)         # Router stats activé
 app.include_router(admin.router)         # Router admin activé
 
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Docker and monitoring"""
+    return {
+        "status": "healthy",
+        "app_name": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+        "debug": settings.DEBUG
+    }
+
 # logger.info(f"Application {settings.APP_NAME} v{settings.APP_VERSION} started")

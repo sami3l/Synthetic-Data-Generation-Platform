@@ -6,6 +6,7 @@ from app.schemas.RequestParameters import RequestParametersBase, RequestParamete
 class DataRequestBase(BaseModel):
     request_name: str
     dataset_name: str
+    uploaded_dataset_id: Optional[int] = None
 
 class DataRequestCreate(DataRequestBase):
     pass

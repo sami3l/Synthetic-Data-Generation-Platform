@@ -68,6 +68,7 @@ const RequestManagement: React.FC = () => {
   };
 
   const quickApprove = async (request: DataRequest) => {
+    //check if the device is phone 
     Alert.alert(
       'Approbation rapide',
       `Approuver rapidement la requête "${request.request_name}" ?`,
