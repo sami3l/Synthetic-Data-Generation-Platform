@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     APP_NAME: str = Field(default="Synthetic Data Generation Platform", env="APP_NAME")
     APP_VERSION: str = Field(default="1.0.0", env="APP_VERSION")
     DEBUG: bool = Field(default=False, env="DEBUG")
+    BACKEND_BASE_URL: str = Field(default="http://localhost:8000", env="BACKEND_BASE_URL")
     
     # File limits
     MAX_FILE_SIZE_MB: int = Field(default=500, env="MAX_FILE_SIZE_MB")

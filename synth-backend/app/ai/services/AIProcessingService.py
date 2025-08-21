@@ -2,21 +2,25 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session, joinedload
 import pandas as pd
 import os
+import io
 import random
+import requests
 from pathlib import Path
 from itertools import product
 from typing import Dict, Any, Tuple, List, Optional
 import logging
+from datetime import datetime
 from contextlib import asynccontextmanager
 
 from app.models.DataRequest import DataRequest
 from app.models.RequestParameters import RequestParameters
+from app.models.UploadedDataset import UploadedDataset
 from app.ai.services.quality_validator import QualityValidator
 from app.ai.models.model_factory import get_model_wrapper
 from app.services.DataRequestService import DataRequestService
 from app.services.DatasetService import DatasetService
 from app.services.NotificationService import NotificationService
-from app.services.SupabaseStorageService import SupabaseStorageService
+from app.services.SimpleSupabaseStorage import SimpleSupabaseStorage
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,9 +40,9 @@ class AIProcessingService:
         self.dataset_service = DatasetService()
         self.request_service = DataRequestService()
         self.notification_service = NotificationService()
-        self.storage_service = SupabaseStorageService()
+        self.storage = SimpleSupabaseStorage()
         
-        # Define base paths
+        # Define base paths (kept for backward compatibility)
         self.base_path = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
         self.data_dir = self.base_path / "data"
         self.dataset_dir = self.data_dir / "datasets"
@@ -75,108 +79,14 @@ class AIProcessingService:
     ) -> Dict[str, Any]:
         """
         Generate synthetic data based on the provided parameters.
+        This method is deprecated - use process_generation_request instead.
         """
-        pass
-        # Retrieve request and parameters
-        data_request = db.query(DataRequest).options(
-            joinedload(DataRequest.request_parameters)
-        ).filter(DataRequest.id == request_id).first()
-        if not data_request:
-            raise HTTPException(status_code=404, detail="Request not found")
-        # Verify file exists
-        dataset_path = self.dataset_dir / data_request.dataset_name
-        if not dataset_path.exists():
-            raise HTTPException(
-                status_code=404, 
-                detail=f"Dataset not found: {dataset_path}"
-            )
-        # Load parameters
-        params = data_request.request_parameters
-
-        if not params:
-            raise HTTPException(
-                status_code=400,
-                detail="Parameters not found for request"
-            )
-        # Check if optimization is required
-        if optimize:
-            best_model, best_params, best_score = await self.search_best_hyperparameters(
-                data=pd.read_csv(dataset_path),
-                params=params
-            )
-
-        return {
-            "status": "success",
-            "data": {
-                "request_id": request_id,
-                "dataset_name": data_request.dataset_name,
-                "model_type": params.model_type,
-                "optimize": optimize,
-                "search_type": search_type,
-                "n_random": n_random
-            },
-            "optimized": optimize,
-            "best_params": best_params,
-            "best_score": best_score
-        }
-        # Load original data
-        original_data = pd.read_csv(dataset_path)
-        logger.info(f"Loaded dataset with {len(original_data)} rows and {len(original_data.columns)} columns")
-        # Initialize variables
-        model = None
-        synthetic_data = None
-        quality_score = None
-        optimized = False
-        best_params = None  
-        best_score = -float('inf')
-        # Handle request status
-        async with self._handle_request_status(db, data_request):
-            try:
-                # Create model wrapper
-                model = get_model_wrapper(
-                    model_type=params.model_type,
-                    hyperparameters=params.hyperparameters
-                )
-                logger.info(f"Model created: {model}")
-
-                # Train the model
-                await model.train(original_data)
-                logger.info("Model training completed")
-
-                # Generate synthetic data
-                synthetic_data = await model.generate(len(original_data))
-                logger.info(f"Generated synthetic data with {len(synthetic_data)} rows")
-
-                # Evaluate quality
-                quality_score = self.quality_validator.evaluate(
-                    real_data=original_data,
-                    synthetic_data=synthetic_data
-                )
-                logger.info(f"Quality score: {quality_score:.4f}")
-
-                # Check if optimization is required
-                if optimize:
-                    best_model, best_params, best_score = await self.search_best_hyperparameters(
-                        data=synthetic_data,
-                        params=params,
-                        search_type=search_type,
-                        n_random=n_random
-                    )
-                    optimized = True
-
-            except Exception as e:
-                logger.error(f"Error during generation: {str(e)}")
-                raise HTTPException(status_code=500, detail=str(e))
-        # Save synthetic data
-        synthetic_file_path = self.synthetic_dir / f"synthetic_{data_request.id}.csv"
-        logger.info(f"Saving synthetic data to {synthetic_file_path}")  
-        synthetic_data.to_csv(synthetic_file_path, index=False)
-        # Update request status
-        data_request.status = "completed"
-        data_request.synthetic_file_path = str(synthetic_file_path)
-        data_request.quality_score = quality_score
-        
-        
+        # Redirect to the new method
+        return await self.process_generation_request(
+            db=db,
+            request_id=request_id,
+            current_user_id=current_user_id
+        )
 
     async def search_best_hyperparameters(
         self,
@@ -296,6 +206,174 @@ class AIProcessingService:
             # Grid search - all combinations
             return list(product(*param_grid.values()))
 
+    async def load_dataset_robustly(
+        self,
+        db: Session,
+        uploaded_dataset: Optional[UploadedDataset],
+        data_request: Optional[DataRequest] = None
+    ) -> Tuple[pd.DataFrame, UploadedDataset]:
+        """
+        Charge un dataset de manière robuste avec plusieurs méthodes de récupération
+        
+        Args:
+            db: Session de base de données
+            uploaded_dataset: Dataset à charger (peut être None)
+            data_request: Requête associée (peut être None)
+            
+        Returns:
+            Tuple avec (DataFrame chargé, UploadedDataset utilisé)
+            
+        Raises:
+            HTTPException: Si le dataset ne peut pas être chargé
+        """
+        # Vérifier si on a un dataset et un chemin valide
+        if not uploaded_dataset or not uploaded_dataset.file_path:
+            if not data_request:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="Aucun dataset ni requête fournis pour le chargement"
+                )
+            
+            logger.warning(f"Dataset manquant pour la requête {data_request.id}. Recherche d'un dataset alternatif...")
+            
+            # Chercher un dataset pour cet utilisateur
+            alternative_datasets = db.query(UploadedDataset).filter(
+                UploadedDataset.user_id == data_request.user_id
+            ).all()
+            
+            if not alternative_datasets:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Aucun dataset trouvé pour cet utilisateur. Veuillez télécharger un dataset."
+                )
+            
+            # Essayer de trouver une correspondance par nom
+            if data_request.dataset_name:
+                for alt_dataset in alternative_datasets:
+                    if (alt_dataset.original_filename and 
+                        (alt_dataset.original_filename.lower() in data_request.dataset_name.lower() or 
+                         data_request.dataset_name.lower() in alt_dataset.original_filename.lower())):
+                        
+                        if await self.storage.check_file_exists(alt_dataset.file_path):
+                            logger.info(f"Dataset correspondant trouvé: {alt_dataset.id} - {alt_dataset.original_filename}")
+                            uploaded_dataset = alt_dataset
+                            
+                            # Mettre à jour la requête
+                            if data_request:
+                                data_request.uploaded_dataset_id = alt_dataset.id
+                                db.commit()
+                            
+                            break
+            
+            # Si aucune correspondance, prendre le plus récent
+            if not uploaded_dataset:
+                logger.warning("Aucune correspondance par nom. Utilisation du dataset le plus récent.")
+                
+                for alt_dataset in sorted(alternative_datasets, key=lambda d: d.created_at or datetime.min, reverse=True):
+                    if await self.storage.check_file_exists(alt_dataset.file_path):
+                        logger.info(f"Utilisation du dataset le plus récent: {alt_dataset.id} - {alt_dataset.original_filename}")
+                        uploaded_dataset = alt_dataset
+                        
+                        # Mettre à jour la requête
+                        if data_request:
+                            data_request.uploaded_dataset_id = alt_dataset.id
+                            db.commit()
+                        
+                        break
+        
+        # À ce stade, on devrait avoir un dataset
+        if not uploaded_dataset or not uploaded_dataset.file_path:
+            raise HTTPException(
+                status_code=404,
+                detail="Aucun dataset valide n'a pu être trouvé. Veuillez télécharger un dataset."
+            )
+        
+        # Vérifier que le fichier existe réellement
+        file_path = uploaded_dataset.file_path
+        file_exists = await self.storage.check_file_exists(file_path)
+        
+        if not file_exists:
+            logger.error(f"Le fichier n'existe pas dans le stockage: {file_path}")
+            
+            # On pourrait implémenter une recherche par nom de fichier similaire ici
+            # Mais pour l'instant, on échoue
+            raise HTTPException(
+                status_code=404,
+                detail=f"Le fichier dataset '{uploaded_dataset.original_filename}' n'existe pas dans le stockage. "
+                      f"Veuillez télécharger à nouveau le dataset."
+            )
+        
+        # Essayer de télécharger le fichier
+        logger.info(f"Téléchargement du dataset depuis Supabase: {file_path}")
+        raw_bytes = await self.storage.download_file(file_path)
+        
+        if not raw_bytes:
+            logger.error(f"Échec du téléchargement du dataset: {file_path}")
+            
+            # Essayer une URL directe
+            try:
+                # URL publique directe
+                public_url = f"{self.storage.supabase_url}/storage/v1/object/public/{self.storage.bucket_name}/{file_path}"
+                logger.info(f"Tentative de téléchargement direct par URL: {public_url}")
+                
+                direct_response = requests.get(public_url, timeout=30)
+                if direct_response.status_code == 200 and direct_response.content:
+                    logger.info("Téléchargement réussi via URL publique")
+                    raw_bytes = direct_response.content
+                else:
+                    # Essayer via une URL signée
+                    logger.info("Tentative via URL signée...")
+                    signed_url = await self.storage.get_download_url(file_path)
+                    
+                    if signed_url:
+                        logger.info(f"URL signée générée: {signed_url[:50]}...")
+                        signed_response = requests.get(signed_url, timeout=30)
+                        
+                        if signed_response.status_code == 200 and signed_response.content:
+                            logger.info("Téléchargement réussi via URL signée")
+                            raw_bytes = signed_response.content
+                        else:
+                            logger.error(f"Échec via URL signée: status={signed_response.status_code}")
+                    else:
+                        logger.error("Impossible de générer une URL signée")
+            except Exception as url_error:
+                logger.error(f"Échec de toutes les tentatives de téléchargement: {str(url_error)}")
+        
+        # Si on a les données, les charger
+        if raw_bytes:
+            try:
+                # Essayer différents encodages
+                try:
+                    data_df = pd.read_csv(io.BytesIO(raw_bytes))
+                except Exception as first_error:
+                    logger.warning(f"Premier essai de lecture CSV échoué: {str(first_error)}")
+                    try:
+                        data_df = pd.read_csv(io.BytesIO(raw_bytes), encoding='latin1')
+                    except Exception as second_error:
+                        logger.warning(f"Deuxième essai échoué: {str(second_error)}")
+                        # Dernier essai avec plus d'options
+                        data_df = pd.read_csv(
+                            io.BytesIO(raw_bytes),
+                            encoding='latin1',
+                            on_bad_lines='skip',
+                            low_memory=False
+                        )
+                
+                logger.info(f"Dataset chargé avec succès: {len(data_df)} lignes, {len(data_df.columns)} colonnes")
+                return data_df, uploaded_dataset
+            
+            except Exception as load_error:
+                logger.error(f"Échec de lecture du CSV: {str(load_error)}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Le fichier CSV ne peut pas être lu: {str(load_error)}"
+                )
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail="Impossible de télécharger le dataset après plusieurs tentatives."
+            )
+
     @asynccontextmanager
     async def _handle_request_status(self, db: Session, data_request: DataRequest):
         """Context manager to handle request status updates"""
@@ -322,18 +400,97 @@ class AIProcessingService:
         try:
             # Retrieve request and parameters
             data_request = db.query(DataRequest).options(
-                joinedload(DataRequest.request_parameters)
+                joinedload(DataRequest.request_parameters),
+                joinedload(DataRequest.uploaded_dataset)
             ).filter(DataRequest.id == request_id).first()
             
             if not data_request:
                 raise HTTPException(status_code=404, detail="Request not found")
 
-            # Verify file exists
-            dataset_path = self.dataset_dir / data_request.dataset_name
-            if not dataset_path.exists():
+            # Get dataset storage path from uploaded_dataset relationship
+            uploaded_dataset = data_request.uploaded_dataset
+            logger.info(f"Data request ID: {data_request.id}")
+            logger.info(f"Uploaded dataset ID: {data_request.uploaded_dataset_id}")
+            logger.info(f"Uploaded dataset object: {uploaded_dataset}")
+            logger.info(f"File path: {uploaded_dataset.file_path if uploaded_dataset else 'None'}")
+            
+            # Si uploaded_dataset est None, essayons de trouver un dataset correspondant
+            if not uploaded_dataset:
+                logger.warning(f"No uploaded_dataset_id associated with request {request_id}. Trying to find a match...")
+                
+                # Chercher un dataset ayant un nom similaire à dataset_name
+                possible_datasets = db.query(UploadedDataset).filter(
+                    UploadedDataset.user_id == data_request.user_id
+                ).all()
+                
+                logger.info(f"Found {len(possible_datasets)} datasets for user {data_request.user_id}")
+                
+                # Essayer de trouver une correspondance par nom
+                for dataset in possible_datasets:
+                    if (dataset.original_filename and data_request.dataset_name and 
+                        (dataset.original_filename.lower() in data_request.dataset_name.lower() or 
+                        data_request.dataset_name.lower() in dataset.original_filename.lower())):
+                        
+                        # Vérifier si le fichier existe dans le stockage
+                        if dataset.file_path and await self.storage.check_file_exists(dataset.file_path):
+                            logger.info(f"Found matching dataset with valid file: {dataset.id} - {dataset.original_filename}")
+                            uploaded_dataset = dataset
+                            
+                            # Mettre à jour la requête avec ce dataset
+                            data_request.uploaded_dataset_id = dataset.id
+                            db.commit()
+                            break
+                        else:
+                            logger.warning(f"Found matching dataset but file does not exist: {dataset.id} - {dataset.file_path}")
+                
+                # Si aucun dataset correspondant n'est trouvé, prendre le plus récent dont le fichier existe
+                if not uploaded_dataset and possible_datasets:
+                    logger.warning("No exact match found. Trying to use the most recent dataset with a valid file.")
+                    
+                    for dataset in sorted(possible_datasets, key=lambda d: d.created_at or datetime.min, reverse=True):
+                        if dataset.file_path and await self.storage.check_file_exists(dataset.file_path):
+                            logger.info(f"Using most recent dataset: {dataset.id} - {dataset.original_filename}")
+                            uploaded_dataset = dataset
+                            data_request.uploaded_dataset_id = dataset.id
+                            db.commit()
+                            break
+            
+            # Vérifier si le dataset sélectionné a un fichier valide
+            if uploaded_dataset and uploaded_dataset.file_path:
+                # Vérifier si le fichier existe réellement dans Supabase
+                file_exists = await self.storage.check_file_exists(uploaded_dataset.file_path)
+                if not file_exists:
+                    logger.error(f"Dataset file does not exist in storage: {uploaded_dataset.file_path}")
+                    
+                    # Chercher un autre dataset valide pour cet utilisateur
+                    alternative_datasets = db.query(UploadedDataset).filter(
+                        UploadedDataset.user_id == data_request.user_id,
+                        UploadedDataset.id != uploaded_dataset.id
+                    ).all()
+                    
+                    for alt_dataset in sorted(alternative_datasets, key=lambda d: d.created_at or datetime.min, reverse=True):
+                        if await self.storage.check_file_exists(alt_dataset.file_path):
+                            logger.info(f"Found alternative dataset: {alt_dataset.id} - {alt_dataset.original_filename}")
+                            uploaded_dataset = alt_dataset
+                            data_request.uploaded_dataset_id = alt_dataset.id
+                            db.commit()
+                            break
+                    else:
+                        # Aucun dataset alternatif trouvé
+                        raise HTTPException(
+                            status_code=404,
+                            detail=f"Le fichier dataset '{uploaded_dataset.original_filename}' n'existe pas dans le stockage. "
+                                  f"Veuillez télécharger à nouveau le dataset ou en sélectionner un autre."
+                        )
+            
+            if not uploaded_dataset or not uploaded_dataset.file_path:
+                error_msg = f"Dataset validation failed - uploaded_dataset: {uploaded_dataset}, file_path: {uploaded_dataset.file_path if uploaded_dataset else 'None'}"
+                logger.error(error_msg)
+                
+                # Message d'erreur plus explicite avec instructions
                 raise HTTPException(
                     status_code=404, 
-                    detail=f"Dataset not found: {dataset_path}"
+                    detail="Dataset introuvable. Veuillez vous assurer qu'un dataset valide est associé à cette requête et qu'il a bien été téléchargé."
                 )
 
             # Load parameters
@@ -345,9 +502,33 @@ class AIProcessingService:
                 )
 
             async with self._handle_request_status(db, data_request):
-                # Load original data
-                original_data = pd.read_csv(dataset_path)
-                logger.info(f"Loaded dataset with {len(original_data)} rows and {len(original_data.columns)} columns")
+                # Utiliser notre méthode robuste pour charger le dataset
+                logger.info(f"Chargement du dataset avec la méthode robuste pour la requête {data_request.id}")
+                
+                try:
+                    # Appel de notre méthode robuste qui gère toutes les vérifications et fallbacks
+                    original_data, used_dataset = await self.load_dataset_robustly(db, uploaded_dataset, data_request)
+                    
+                    # Si un dataset différent a été utilisé, mettre à jour la référence
+                    if used_dataset.id != uploaded_dataset.id:
+                        logger.info(f"Dataset alternatif utilisé: {used_dataset.id} au lieu de {uploaded_dataset.id}")
+                        uploaded_dataset = used_dataset
+                    
+                    logger.info(f"Dataset chargé avec succès: {len(original_data)} lignes et {len(original_data.columns)} colonnes")
+                    
+                    # Vérifier que le DataFrame n'est pas vide
+                    if original_data.empty:
+                        logger.error(f"Dataset est vide: {uploaded_dataset.file_path}")
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Le fichier dataset '{uploaded_dataset.original_filename}' est vide. Veuillez utiliser un dataset non-vide."
+                        )
+                except Exception as e:
+                    logger.error(f"Failed to load dataset from Supabase: {str(e)}", exc_info=True)
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Erreur lors du chargement du dataset: {str(e)}"
+                    )
 
                 # Initialize variables
                 model = None
@@ -419,68 +600,48 @@ class AIProcessingService:
                         synthetic_data=synthetic_data
                     )
 
-                # Create output path
-                output_filename = f"{request_id}_synthetic_data.csv"
-                output_path = self.synthetic_dir / output_filename
-
-                # Save results locally first
-                synthetic_data.to_csv(output_path, index=False)
-                logger.info(f"Synthetic data saved locally to: {output_path}")
-
-                # Upload to Supabase Storage
-                supabase_path = f"synthetic/{current_user_id}/{output_filename}"
-                upload_result = None
-                download_url = None
-                
-                logger.info(f"🔄 Attempting to upload to Supabase: {supabase_path}")
+                # Upload synthetic data directly to Supabase Storage
+                output_rel_path = f"{current_user_id}/synthetic/{request_id}_synthetic_data.csv"
+                logger.info(f"Uploading synthetic data to Supabase: {output_rel_path}")
                 
                 try:
-                    with open(output_path, 'rb') as file:
-                        logger.info(f"📁 File size: {os.path.getsize(output_path)} bytes")
-                        
-                        upload_result = await self.storage_service.upload_file(
-                            file_path=supabase_path,
-                            file_data=file,
-                            content_type="text/csv"
-                        )
+                    # Convert DataFrame to CSV bytes
+                    buf = io.BytesIO()
+                    synthetic_data.to_csv(buf, index=False)
+                    buf.seek(0)  # Reset position for upload
                     
-                    if upload_result:
-                        logger.info(f"✅ Upload successful to: {upload_result}")
-                        
-                        # Generate download URL
-                        download_url = await self.storage_service.get_download_url(
-                            file_path=supabase_path,
-                            expires_in=7 * 24 * 3600  # 7 days
-                        )
-                        
-                        if download_url:
-                            logger.info(f"✅ Download URL generated successfully")
-                            
-                            # Update DataRequest with Supabase info
-                            data_request.supabase_url = download_url
-                            data_request.output_file_path = supabase_path
-                            db.commit()
-                            
-                            logger.info(f"✅ Database updated with Supabase info")
-                        else:
-                            logger.error("❌ Failed to generate download URL")
-                    else:
-                        logger.error("❌ Upload to Supabase failed")
-                        
+                    # Upload to Supabase
+                    supabase_path = await self.storage.upload_file(
+                        output_rel_path, 
+                        buf, 
+                        content_type="text/csv"
+                    )
+                    
+                    logger.info(f"✅ Upload successful to: {supabase_path}")
+                    
+                    # Generate download URL
+                    download_url = await self.storage.get_download_url(
+                        supabase_path, 
+                        expires_in=7 * 24 * 3600  # 7 days
+                    )
+                    
+                    logger.info(f"✅ Download URL generated successfully")
+                    
                 except Exception as upload_error:
                     logger.error(f"❌ Supabase upload error: {str(upload_error)}")
-                    import traceback
-                    logger.error(f"Traceback: {traceback.format_exc()}")
-                    # Continue with local file as fallback
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to upload synthetic data: {str(upload_error)}"
+                    )
 
                 # Save synthetic dataset metadata
                 synthetic_dataset = self.dataset_service.save_generated_data(
                     db=db,
                     request_id=request_id,
-                    file_path=str(output_path),
+                    file_path=supabase_path,  # Store Supabase storage path
                     user_id=current_user_id,
-                    supabase_path=supabase_path if upload_result else None,
-                    download_url=download_url if upload_result else None
+                    supabase_path=supabase_path,
+                    download_url=download_url
                 )
 
                 # Create success notification
@@ -500,9 +661,8 @@ class AIProcessingService:
                 result = {
                     "request_id": request_id,
                     "quality_score": round(quality_score, 4) if quality_score else None,
-                    "output_path": str(output_path),
-                    "supabase_path": supabase_path if upload_result else None,
-                    "download_url": download_url if upload_result else None,
+                    "supabase_path": supabase_path,
+                    "download_url": download_url,
                     "optimized": optimized,
                     "final_parameters": {
                         "epochs": best_params["epochs"],

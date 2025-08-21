@@ -6,7 +6,8 @@ import {
   Alert,
   SafeAreaView,
   TouchableOpacity,
-  Linking
+  Linking,
+  Platform
 } from 'react-native';
 import { 
   Text, 
@@ -33,6 +34,7 @@ interface DataRequest {
   status: 'pending' | 'approved' | 'rejected' | 'processing' | 'completed' | 'failed' | 'cancelled';
   created_at: string;
   updated_at: string;
+  uploaded_dataset_id?: number; // Ajout de ce champ pour l'ID du dataset
   // NOUVEAUX CHAMPS
   approved_by?: {
     id: number;
@@ -89,6 +91,7 @@ interface DataRequest {
 
 interface FormData {
   request_name: string;
+  filename: string; // Nom du fichier pour le dataset
   model_type: 'ctgan' | 'tvae';
   sample_size: number;
   epochs: number;
@@ -125,6 +128,7 @@ export default function RequestDetailsScreen() {
   
   const [formData, setFormData] = useState<FormData>({
     request_name: '',
+    filename: '',
     model_type: 'ctgan',
     sample_size: 1000,
     epochs: 100,
@@ -164,6 +168,7 @@ export default function RequestDetailsScreen() {
       // Initialiser le formulaire avec les données existantes
       setFormData({
         request_name: response.request_name || '',
+        filename: response.dataset_name || '',
         model_type: (params?.model_type as 'ctgan' | 'tvae') || 'ctgan',
         sample_size: 1000, // Valeur par défaut
         epochs: params?.epochs || 100,
@@ -230,8 +235,7 @@ export default function RequestDetailsScreen() {
       };
 
       console.log('💾 [RequestDetails] Sauvegarde:', updateData);
-      
-      // Appel API pour mettre à jour la requête
+     
       await dataService.updateDataRequest(Number(id), updateData);
 
       Toast.show({
@@ -258,64 +262,144 @@ export default function RequestDetailsScreen() {
   const handleGenerateData = async () => {
     if (!request?.id) return;
 
-    Alert.alert(
-      'Generate Data',
-      'Are you sure you want to generate synthetic data with current parameters?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Generate',
-          onPress: async () => {
-            try {
-              setIsGenerating(true);
+    // Fonction pour exécuter la génération
+    const executeGeneration = async () => {
+      try {
+        setIsGenerating(true);
+        
+        // Récupérer les datasets disponibles pour obtenir un ID valide
+        let datasetId: number;
+        if (request.uploaded_dataset_id) {
+          datasetId = request.uploaded_dataset_id;
+          console.log('🔍 [RequestDetails] Utilisation dataset ID existant:', datasetId);
+        } else {
+          try {
+            // Récupérer tous les datasets de l'utilisateur
+            const datasets = await dataService.getUploadedDatasets();
+            console.log('🔍 [RequestDetails] Datasets disponibles:', datasets);
+            
+            if (datasets.length > 0) {
+              // Essayer de trouver un dataset qui correspond au nom exact ou partiellement
+              let matchingDataset = datasets.find(d => 
+                d.original_filename?.toLowerCase().includes(request.dataset_name.toLowerCase()) ||
+                request.dataset_name.toLowerCase().includes(d.original_filename?.toLowerCase() || '')
+              );
               
-              // const generationData = {
-              //   request_id: request.id,
-              //   model_type: formData.model_type,
-              //   n_samples: formData.sample_size,
-              //   epochs: formData.epochs,
-              //   batch_size: formData.batch_size,
-              //   learning_rate: formData.learning_rate,
-              //   optimization_enabled: formData.optimization_method !== 'none',
-              //   optimization_search_type: formData.optimization_method === 'none' ? 'grid' : formData.optimization_method,
-              //   optimization_n_trials: formData.n_trials,
-              //   hyperparameters: formData.optimization_method !== 'none' ? ['epochs', 'batch_size'] : []
-              // };
-
-              // console.log('🚀 [RequestDetails] Démarrage génération:', generationData);
+              // Si aucun match, afficher la liste pour permettre une sélection
+              if (!matchingDataset) {
+                console.log('⚠️ [RequestDetails] Aucun dataset correspondant trouvé, utilisation du premier dataset');
+                
+                // Si au moins un dataset est disponible, utiliser le premier
+                if (datasets.length > 0) {
+                  matchingDataset = datasets[0];
+                }
+              }
               
-              // Use the working dataService.generateData endpoint
-              const result = await dataService.generateSyntheticData(Number(id));
-              
-              console.log('✅ [RequestDetails] Génération démarrée:', result);
-              
-              // Update the request status
-              setRequest(prev => ({
-                ...prev!,
-                status: 'processing',
-                updated_at: new Date().toISOString()
-              }));
-
-              Toast.show({
-                type: 'success',
-                text1: 'Génération démarrée !',
-                text2: 'Suivez l\'avancement dans la liste des requêtes'
-              });
-
-            } catch (error: any) {
-              console.error('Generation error:', error);
-              Toast.show({
-                type: 'error',
-                text1: 'Erreur de génération',
-                text2: error.message || 'Impossible de démarrer la génération'
-              });
-            } finally {
-              setIsGenerating(false);
+              if (matchingDataset) {
+                datasetId = matchingDataset.id;
+                
+                console.log('🔍 [RequestDetails] Dataset sélectionné:', {
+                  id: datasetId,
+                  filename: matchingDataset.original_filename,
+                });
+                
+                // Mettre à jour la requête avec le dataset_id
+                try {
+                  await dataService.updateDataRequest(Number(id), {
+                    request: {
+                      request_name: request.request_name,
+                      dataset_name: request.dataset_name,
+                      uploaded_dataset_id: datasetId // Important: ajouter l'ID du dataset
+                    }
+                  });
+                  console.log('✅ [RequestDetails] Requête mise à jour avec dataset ID:', datasetId);
+                } catch (updateError) {
+                  console.warn('⚠️ [RequestDetails] Impossible de mettre à jour la requête:', updateError);
+                  // Continue quand même avec la génération
+                }
+              } else {
+                throw new Error('Aucun dataset correspondant trouvé. Veuillez d\'abord uploader un dataset.');
+              }
+            } else {
+              throw new Error('Aucun dataset disponible. Veuillez d\'abord uploader un dataset.');
             }
+          } catch (datasetError) {
+            console.error('Erreur récupération datasets:', datasetError);
+            throw new Error('Impossible de récupérer les datasets disponibles.');
           }
         }
-      ]
-    );
+        
+        const generationConfig = {
+          dataset_id: datasetId,
+          model_type: formData.model_type,
+          sample_size: formData.sample_size,
+          mode: formData.optimization_method !== 'none' ? 'optimization' : 'simple' as 'simple' | 'optimization',
+          epochs: formData.epochs,
+          batch_size: formData.batch_size,
+          learning_rate: formData.learning_rate,
+          generator_lr: formData.learning_rate, // Utiliser le même learning rate pour le générateur
+          discriminator_lr: formData.learning_rate, // Utiliser le même learning rate pour le discriminateur
+          optimization_method: formData.optimization_method !== 'none' ? formData.optimization_method as 'grid' | 'random' | 'bayesian' : undefined,
+          n_trials: formData.optimization_method !== 'none' ? formData.n_trials : undefined,
+          hyperparameters: formData.optimization_method !== 'none' ? ['epochs', 'batch_size', 'learning_rate'] : undefined
+        };
+
+        console.log('🚀 [RequestDetails] Démarrage génération avec config:', generationConfig);
+        
+        // Utiliser la nouvelle signature de generateSyntheticData
+        const result = await dataService.generateSyntheticData(Number(id), generationConfig);
+        
+        console.log('✅ [RequestDetails] Génération démarrée:', result);
+        
+        // Update the request status
+        setRequest(prev => ({
+          ...prev!,
+          status: 'processing',
+          updated_at: new Date().toISOString()
+        }));
+
+        Toast.show({
+          type: 'success',
+          text1: 'Génération démarrée !',
+          text2: 'Suivez l\'avancement dans la liste des requêtes'
+        });
+
+      } catch (error: any) {
+        console.error('Generation error:', error);
+        Toast.show({
+          type: 'error',
+          text1: 'Erreur de génération',
+          text2: error.message || 'Impossible de démarrer la génération'
+        });
+      } finally {
+        setIsGenerating(false);
+      }
+    };
+
+    // Gestion différente selon la plateforme
+    if (Platform.OS === 'web') {
+      // Pour le web : utiliser confirm() natif
+      const confirmed = window.confirm(
+        'Generate Data\n\nAre you sure you want to generate synthetic data with current parameters?'
+      );
+      
+      if (confirmed) {
+        await executeGeneration();
+      }
+    } else {
+      // Pour mobile : utiliser Alert.alert comme avant
+      Alert.alert(
+        'Generate Data',
+        'Are you sure you want to generate synthetic data with current parameters?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Generate',
+            onPress: executeGeneration
+          }
+        ]
+      );
+    }
   };
 
   const handleDownloadData = async () => {
@@ -330,24 +414,63 @@ export default function RequestDetailsScreen() {
     }
 
     try {
-      // Récupérer l'URL de téléchargement depuis le backend
-      const downloadData = await dataService.getDownloadUrl(request.id);
+      // Étape 1: Obtenir un token de téléchargement temporaire
+      console.log('🔑 Génération du token de téléchargement...');
+      const tokenResponse = await dataService.getDownloadToken(request.id);
       
-      if (downloadData.download_url) {
-        // Ouvrir l'URL dans le navigateur pour le téléchargement
-        const supported = await Linking.canOpenURL(downloadData.download_url);
-        if (supported) {
-          await Linking.openURL(downloadData.download_url);
-          Toast.show({
-            type: 'success',
-            text1: 'Téléchargement démarré',
-            text2: 'Le fichier va être téléchargé'
-          });
+      if (tokenResponse.download_url) {
+        console.log('🔗 URL de téléchargement avec token:', tokenResponse.download_url);
+        
+        // Gestion différente selon la plateforme
+        if (Platform.OS === 'web') {
+          // Pour le web : ouvrir dans un nouvel onglet ou télécharger directement
+          try {
+            const link = document.createElement('a');
+            link.href = tokenResponse.download_url;
+            link.target = '_blank';
+            link.download = `synthetic_data_${request.id}.csv`; // Nom de fichier suggéré
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            Toast.show({
+              type: 'success',
+              text1: 'Téléchargement démarré',
+              text2: `Le fichier va être téléchargé (token valide ${tokenResponse.expires_in_minutes} minutes)`
+            });
+          } catch (webError) {
+            console.error('Erreur téléchargement web:', webError);
+            // Fallback : ouvrir dans un nouvel onglet
+            window.open(tokenResponse.download_url, '_blank');
+            Toast.show({
+              type: 'info',
+              text1: 'Lien ouvert',
+              text2: 'Le téléchargement s\'ouvrira dans un nouvel onglet'
+            });
+          }
         } else {
-          Alert.alert('Erreur', 'Impossible d\'ouvrir le lien de téléchargement');
+          // Pour mobile : utiliser Linking comme avant
+          const supported = await Linking.canOpenURL(tokenResponse.download_url);
+          if (supported) {
+            await Linking.openURL(tokenResponse.download_url);
+            Toast.show({
+              type: 'success',
+              text1: 'Téléchargement démarré',
+              text2: `Le fichier va être téléchargé (token valide ${tokenResponse.expires_in_minutes} minutes)`
+            });
+          } else {
+            // Si Linking ne fonctionne pas, proposer le lien à copier
+            Alert.alert(
+              'Lien de téléchargement',
+              `Copiez ce lien dans votre navigateur :\n\n${tokenResponse.download_url}\n\n(Valide ${tokenResponse.expires_in_minutes} minutes)`,
+              [
+                { text: 'OK', style: 'default' }
+              ]
+            );
+          }
         }
       } else {
-        Alert.alert('Erreur', 'URL de téléchargement non disponible');
+        Alert.alert('Erreur', 'Impossible de générer le token de téléchargement');
       }
     } catch (error: any) {
       console.error('Erreur lors du téléchargement:', error);

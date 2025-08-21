@@ -7,12 +7,12 @@ from app.db.database import Base
 
 class RequestStatus(str, Enum):
     PENDING = "pending"
-    APPROVED = "approved"        # ✅ NOUVEAU
+    APPROVED = "approved"        
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
-    REJECTED = "rejected"        # ✅ NOUVEAU
+    REJECTED = "rejected"        
 
 class DataRequest(Base):
     __tablename__ = "data_requests"
@@ -20,14 +20,13 @@ class DataRequest(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    # uploaded_dataset_id = Column(Integer, ForeignKey("uploaded_datasets.id"), nullable=True)  # Temporairement commenté - colonne n'existe pas encore
+    uploaded_dataset_id = Column(Integer, ForeignKey("uploaded_datasets.id"), nullable=True)
     request_name = Column(String, nullable=False)
     dataset_name = Column(String, nullable=False)
     status = Column(String, default=RequestStatus.PENDING)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # ✅ NOUVEAUX CHAMPS POUR APPROBATION
     approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     approved_at = Column(DateTime, nullable=True)
     rejection_reason = Column(Text, nullable=True)
@@ -56,7 +55,7 @@ class DataRequest(Base):
     # ✅ NOUVELLE RELATION POUR L'APPROBATEUR
     approver = relationship("User", foreign_keys=[approved_by])
     
-    # uploaded_dataset = relationship("UploadedDataset", back_populates="data_requests")  # Temporairement commenté
+    uploaded_dataset = relationship("UploadedDataset", back_populates="data_requests")
     
     # Nouvelle relation pour l'optimisation avancée
     optimization_config = relationship(

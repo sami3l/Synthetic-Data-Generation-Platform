@@ -137,19 +137,6 @@ class AuthService {
         }
     }
 
-    // async deleteRequest(requestId: number): Promise<void> {
-    //     try {
-    //         await axiosInstance.delete(`/data/requests/${requestId}`);
-    //     } catch (error: any) {
-    //         if (error.response?.status === 401) {
-    //             throw new Error('Session expired. Please login again.');
-    //         }
-    //         console.error(`Delete request ${requestId} error:`, error);
-    //         throw new Error(`Failed to delete request with ID ${requestId}`);
-    //     }
-    // }
-
-
     async deleteRequest(requestId: number): Promise<void> {
         try {
             const response = await axiosInstance.delete(`/data/requests/${requestId}`);
@@ -246,7 +233,7 @@ class AuthService {
     // Generation methods
     async generateData(requestId: number): Promise<GenerationResult> {
         try {
-            const response = await axiosInstance.post(`/data/generate/${requestId}`);
+            const response = await axiosInstance.post(`/generation/v2/process/${requestId}`);
             return response.data;
         } catch (error: any) {
             if (error.response?.status === 401) {
@@ -285,7 +272,7 @@ class AuthService {
         }
     }
 
-    // Nouvelles méthodes d'optimisation
+    // Optimization methods
     async createOptimizationConfig(config: OptimizationConfig): Promise<OptimizationConfig> {
         const response = await axiosInstance.post('/optimization/config', config);
         return response.data;
@@ -327,11 +314,21 @@ class AuthService {
         return response.data;
     }
 
+    async generateDataWithOptimization(
+        requestId: number, 
+        optimizationConfig: OptimizationConfig
+    ): Promise<{ message: string; request_id: number; optimization_config_id: number }> {
+        const response = await axiosInstance.post(
+          `/generation/v2/process-with-optimization/${requestId}`, 
+          optimizationConfig
+        );
+        return response.data;
+    }
+
     async stopOptimization(configId: number): Promise<{ message: string }> {
         const response = await axiosInstance.delete(`/optimization/config/${configId}`);
         return response.data;
     }
-
 }
 
 export const authService = new AuthService();

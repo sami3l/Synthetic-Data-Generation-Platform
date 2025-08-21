@@ -7,3 +7,6 @@ synth-backend/.env.example
 synth-backend/requirements.txt
 synth-backend/requirements.txt
 synthetic-data-platform/.env
+ENV_SETUP.md
+synth-backend/alembic/versions/*
+

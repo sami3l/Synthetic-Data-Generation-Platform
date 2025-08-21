@@ -55,9 +55,9 @@ app.add_middleware(LoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "exp://192.168.11.156:8081",
+        "exp://192.168.11.144:8081",
         "http://localhost:8081",
-        "http://192.168.11.156:8081",
+        "http://192.168.11.144:8081",
         "*"
     ],
     allow_credentials=True,
@@ -77,5 +77,16 @@ app.include_router(dataset.router)       # Router synthetic datasets
 app.include_router(optimization.router)  # Router optimization activé
 app.include_router(stats.router)         # Router stats activé
 app.include_router(admin.router)         # Router admin activé
+
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Docker and monitoring"""
+    return {
+        "status": "healthy",
+        "app_name": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+        "debug": settings.DEBUG
+    }
 
 # logger.info(f"Application {settings.APP_NAME} v{settings.APP_VERSION} started")

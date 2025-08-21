@@ -23,9 +23,8 @@ from app.schemas.GenerationV2 import (
     OptimizationResults
 )
 from app.dependencies.auth import get_current_user
-from app.services.SyntheticDataGenerationService import SyntheticDataGenerationService
+from app.ai.services.AIProcessingService import AIProcessingService
 from app.services.NotificationService import NotificationService
-from app.services.SupabaseStorageService import SupabaseStorageService
 import asyncio
 import json
 from datetime import datetime
@@ -36,8 +35,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/generation/v2", tags=["Generation V2"])
 
 # Services
-generation_service = SyntheticDataGenerationService()
-storage_service = SupabaseStorageService()
+ai_processing_service = AIProcessingService()
+notification_service = NotificationService()
 
 
 @router.post("/start", response_model=GenerationStartResponse)
@@ -72,6 +71,7 @@ async def start_generation_v2(
         # Créer une requête de génération
         generation_request = DataRequest(
             user_id=current_user.id,
+            uploaded_dataset_id=config.dataset_id,  # Lien vers le dataset uploadé
             request_name=f"Génération {config.model_type.upper()} - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
             dataset_name=dataset.original_filename,
             status="pending"
@@ -523,7 +523,7 @@ def _estimate_generation_time(config: GenerationConfigRequest) -> int:
 async def _process_generation_v2(request_id: int, sample_size: int, dataset_path: str):
     """
     Traite une requête de génération en arrière-plan
-    Version améliorée avec support de la nouvelle structure
+    Version améliorée avec support de la nouvelle structure et Supabase
     """
     from app.db.database import SessionLocal
     
@@ -533,71 +533,60 @@ async def _process_generation_v2(request_id: int, sample_size: int, dataset_path
         # Récupérer la requête
         request = db.query(DataRequest).filter(DataRequest.id == request_id).first()
         if not request:
+            logger.error(f"Request {request_id} not found")
             return
         
         # Marquer comme en cours
         request.status = "processing"
-        request.started_at = datetime.utcnow()
         db.commit()
         
         logger.info(f"Démarrage de la génération v2 pour la requête {request_id}")
         
-        # Récupérer les paramètres
-        params = db.query(RequestParameters).filter(
-            RequestParameters.request_id == request_id
-        ).first()
-        
-        if not params:
-            raise Exception("Paramètres non trouvés")
-        
-        # Simuler la génération pour l'instant
-        # TODO: Intégrer avec le vrai service de génération
-        await asyncio.sleep(2)  # Simulation
-        
-        # Simuler différents résultats selon le mode
-        if params.optimization_enabled:
-            # Mode optimisation - simulation plus longue
-            for trial in range(params.optimization_n_trials):
-                await asyncio.sleep(1)  # Simulation de chaque trial
-                logger.info(f"Trial {trial + 1}/{params.optimization_n_trials} pour la requête {request_id}")
-        
-        # Finaliser la requête
-        request.status = "completed"
-        request.completed_at = datetime.utcnow()
-        request.quality_score = 0.85  # Score simulé
-        request.generation_time = 120.5  # Temps simulé
-        db.commit()
-        
-        logger.info(f"Génération v2 terminée pour la requête {request_id}")
-        
-        # Envoyer notification de succès
+        # Utiliser l'AIProcessingService pour traiter la requête
         try:
-            NotificationService.send_notification(
+            result = await ai_processing_service.process_generation_request(
                 db=db,
-                user_id=request.user_id,
-                message=f"Génération #{request_id} terminée avec succès! Score: 0.85"
+                request_id=request_id,
+                current_user_id=request.user_id
             )
-        except Exception as e:
-            logger.warning(f"Erreur notification: {e}")
+            
+            logger.info(f"Génération réussie pour la requête {request_id}")
+            logger.info(f"Résultat: {result}")
+            
+            # Le statut sera mis à jour par l'AIProcessingService
+            
+        except Exception as generation_error:
+            logger.error(f"Erreur lors de la génération {request_id}: {str(generation_error)}")
+            
+            # Marquer comme échoué
+            request.status = "failed"
+            request.error_message = str(generation_error)
+            db.commit()
+            
+            # Envoyer notification d'échec
+            try:
+                await NotificationService.send_notification(
+                    db=db,
+                    user_id=request.user_id,
+                    message=f"Génération échouée: {str(generation_error)}"
+                )
+            except Exception as notif_error:
+                logger.error(f"Erreur notification échec: {notif_error}")
+                
+            raise generation_error
         
     except Exception as e:
         logger.error(f"Erreur lors de la génération v2 {request_id}: {e}")
         
-        # Marquer comme échouée
-        request.status = "failed"
-        request.error_message = str(e)
-        request.completed_at = datetime.utcnow()
-        db.commit()
-        
-        # Envoyer notification d'échec
+        # Marquer comme échouée en cas d'erreur inattendue
         try:
-            NotificationService.send_notification(
-                db=db,
-                user_id=request.user_id,
-                message=f"Génération #{request_id} échouée: {str(e)}"
-            )
-        except Exception as notification_error:
-            logger.warning(f"Erreur notification: {notification_error}")
+            request = db.query(DataRequest).filter(DataRequest.id == request_id).first()
+            if request:
+                request.status = "failed"
+                request.error_message = str(e)
+                db.commit()
+        except Exception as db_error:
+            logger.error(f"Erreur mise à jour status: {db_error}")
     
     finally:
         db.close()

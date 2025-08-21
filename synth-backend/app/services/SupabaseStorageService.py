@@ -13,9 +13,10 @@ logger = logging.getLogger(__name__)
 class SupabaseStorageService:
     def __init__(self):
         try:
+            # Pour la compatibilité avec supabase-py 2.17.0+
             self.supabase: Client = create_client(
-                settings.SUPABASE_URL,
-                settings.SUPABASE_ANON_KEY
+                supabase_url=settings.SUPABASE_URL,
+                supabase_key=settings.SUPABASE_ANON_KEY
             )
             self.bucket_name = settings.SUPABASE_BUCKET_NAME
             logger.info(f"SupabaseStorageService initialized with bucket: {self.bucket_name}")

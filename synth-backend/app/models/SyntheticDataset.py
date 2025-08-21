@@ -25,6 +25,8 @@ class SyntheticDataset(Base):
     # Access information
     download_url = Column(String)
     url_expires_at = Column(DateTime)
+    download_token = Column(String, nullable=True)  # Token temporaire pour téléchargement sans auth
+    token_expires_at = Column(DateTime, nullable=True)  # Expiration du token
     
     # Generation metadata
     quality_score = Column(Float)

@@ -1,7 +1,7 @@
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.db.database import get_db
 from app.models.DataRequest import DataRequest
 from app.models.SyntheticDataset import SyntheticDataset
@@ -9,6 +9,7 @@ from app.models.RequestParameters import RequestParameters
 from app.models.Notification import Notification
 from app.models.OptimizationResult import OptimizationResult
 from app.models.OptimizationConfig import OptimizationConfig
+from app.models.UploadedDataset import UploadedDataset
 from app.schemas.DataRequest import DataRequestOut
 from app.schemas.RequestParameters import RequestParametersOut
 from app.schemas.Notification import NotificationCreate, NotificationOut
@@ -18,15 +19,16 @@ from app.models.user import User
 from app.schemas.DataRequest import DataRequestWithParams
 from app.ai.services.AIProcessingService import AIProcessingService
 from app.services.NotificationService import NotificationService
-from app.services.SupabaseStorageService import SupabaseStorageService
+from app.services.SimpleSupabaseStorage import SimpleSupabaseStorage, storage_service
+from app.core.config import settings
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/data", tags=["Data"])
 
-# Services
-storage_service = SupabaseStorageService()
+# Services - Utiliser SimpleSupabaseStorage au lieu de SupabaseStorageService
+storage_service = SimpleSupabaseStorage()
 
 @router.get("/requests", response_model=List[DataRequestOut])
 def get_all_data_requests(
@@ -193,6 +195,11 @@ def update_data_request(
         request.request_name = data.request.request_name
         request.dataset_name = data.request.dataset_name
         
+        # Update the uploaded_dataset_id if provided
+        if hasattr(data.request, 'uploaded_dataset_id') and data.request.uploaded_dataset_id is not None:
+            request.uploaded_dataset_id = data.request.uploaded_dataset_id
+            logger.info(f"Updated uploaded_dataset_id to {data.request.uploaded_dataset_id}")
+        
         # Update or create the parameters
         if data.params:
             params = db.query(RequestParameters).filter(
@@ -238,7 +245,8 @@ def create_data_request(
         data_request = DataRequest(
             user_id=user.id,
             request_name=data.request.request_name,
-            dataset_name=data.request.dataset_name
+            dataset_name=data.request.dataset_name,
+            uploaded_dataset_id=data.request.uploaded_dataset_id if hasattr(data.request, 'uploaded_dataset_id') else None
         )
         db.add(data_request)
         db.flush()
@@ -424,6 +432,126 @@ async def generate_with_optimization(
         db.rollback()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
+@router.post("/check-storage-datasets")
+async def check_storage_datasets(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Vérifie l'existence de tous les fichiers datasets dans Supabase.
+    Marque les datasets comme invalides si le fichier n'existe pas.
+    """
+    if current_user.role != "admin" and current_user.role != "developer":
+        raise HTTPException(status_code=403, detail="Accès refusé. Admin ou Developer requis.")
+    
+    storage_service = SimpleSupabaseStorage()
+    
+    # Récupérer tous les datasets
+    datasets = db.query(UploadedDataset).all()
+    logger.info(f"Checking {len(datasets)} datasets in storage")
+    
+    results = {
+        "total": len(datasets),
+        "existing": 0,
+        "missing": 0,
+        "missing_files": []
+    }
+    
+    for dataset in datasets:
+        if dataset.file_path:
+            exists = await storage_service.check_file_exists(dataset.file_path)
+            
+            if exists:
+                results["existing"] += 1
+                logger.info(f"✅ Dataset {dataset.id} file exists: {dataset.file_path}")
+            else:
+                results["missing"] += 1
+                logger.warning(f"❌ Dataset {dataset.id} file missing: {dataset.file_path}")
+                results["missing_files"].append({
+                    "id": dataset.id,
+                    "filename": dataset.original_filename,
+                    "path": dataset.file_path,
+                    "user_id": dataset.user_id
+                })
+                
+                # Marquer ce dataset comme invalide
+                dataset.is_valid = False
+                dataset.validation_errors = dataset.validation_errors or []
+                dataset.validation_errors.append({
+                    "error": "file_not_found",
+                    "message": f"Le fichier n'existe pas dans le stockage: {dataset.file_path}",
+                    "checked_at": datetime.utcnow().isoformat()
+                })
+    
+    # Enregistrer les modifications
+    db.commit()
+    
+    return results
+
+@router.post("/fix-missing-datasets")
+def fix_missing_datasets(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Utilitaire pour associer automatiquement les datasets aux requêtes existantes
+    qui n'ont pas de uploaded_dataset_id.
+    """
+    if current_user.role != "admin" and current_user.role != "developer":
+        raise HTTPException(status_code=403, detail="Accès refusé. Admin ou Developer requis.")
+    
+    try:
+        # Récupérer toutes les requêtes sans dataset_id
+        requests_without_dataset = db.query(DataRequest).filter(
+            DataRequest.uploaded_dataset_id == None
+        ).all()
+        
+        logger.info(f"Found {len(requests_without_dataset)} requests without dataset_id")
+        
+        fixed_requests = 0
+        
+        for request in requests_without_dataset:
+            # Chercher un dataset correspondant au nom
+            datasets = db.query(UploadedDataset).filter(
+                UploadedDataset.user_id == request.user_id
+            ).all()
+            
+            found_match = False
+            for dataset in datasets:
+                if dataset.original_filename and request.dataset_name and (
+                    dataset.original_filename.lower() in request.dataset_name.lower() or 
+                    request.dataset_name.lower() in dataset.original_filename.lower()
+                ):
+                    # Associer ce dataset à la requête
+                    request.uploaded_dataset_id = dataset.id
+                    fixed_requests += 1
+                    found_match = True
+                    logger.info(f"Associated request {request.id} ({request.dataset_name}) with dataset {dataset.id} ({dataset.original_filename})")
+                    break
+                    
+            if not found_match and datasets:
+                # Si pas de correspondance mais des datasets existent, utiliser le plus récent
+                latest_dataset = max(datasets, key=lambda d: d.created_at if d.created_at else datetime.min)
+                request.uploaded_dataset_id = latest_dataset.id
+                fixed_requests += 1
+                logger.info(f"Associated request {request.id} with latest dataset {latest_dataset.id} (no match found)")
+        
+        db.commit()
+        
+        return {
+            "message": f"Fixed {fixed_requests} out of {len(requests_without_dataset)} requests",
+            "total_processed": len(requests_without_dataset),
+            "total_fixed": fixed_requests
+        }
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error fixing missing datasets: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lors de la correction des datasets manquants: {str(e)}"
+        )
+
 @router.get("/requests/pending")
 def get_pending_requests(
     db: Session = Depends(get_db),
@@ -452,6 +580,7 @@ def get_pending_requests(
 @router.get("/requests/{request_id}/download")
 async def download_synthetic_data(
     request_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -459,18 +588,391 @@ async def download_synthetic_data(
     Télécharge les données synthétiques générées
     """
     # Vérifier que la requête existe et appartient à l'utilisateur
-    request = db.query(DataRequest).filter(
+    data_request = db.query(DataRequest).filter(
         DataRequest.id == request_id,
         DataRequest.user_id == current_user.id
     ).first()
     
-    if not request:
+    if not data_request:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Requête non trouvée"
         )
     
-    if request.status != "completed":
+    if data_request.status != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La génération n'est pas terminée"
+        )
+    
+    # Récupérer le dataset synthétique associé
+    synthetic_dataset = db.query(SyntheticDataset).filter(
+        SyntheticDataset.request_id == request_id,
+        SyntheticDataset.user_id == current_user.id
+    ).first()
+    
+    if not synthetic_dataset:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Dataset synthétique non trouvé"
+        )
+    
+    # Vérifier si une URL de téléchargement existe déjà et est encore valide
+    if synthetic_dataset.download_url and synthetic_dataset.url_expires_at:
+        # Vérifier si l'URL n'est pas expirée
+        from datetime import datetime, timezone
+        current_time = datetime.now(timezone.utc)
+        expires_at = synthetic_dataset.url_expires_at
+        
+        # S'assurer que expires_at a un timezone
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        
+        if expires_at > current_time:
+            # URL encore valide
+            logger.info(f"Using existing valid download URL for request {request_id}")
+            return {
+                "download_url": synthetic_dataset.download_url,
+                "file_name": synthetic_dataset.file_name,
+                "file_size": synthetic_dataset.file_size,
+                "file_format": synthetic_dataset.file_format
+            }
+        else:
+            logger.info(f"Download URL expired for request {request_id}, will regenerate")
+    elif synthetic_dataset.download_url:
+        # URL existe mais pas d'info d'expiration, on l'utilise quand même
+        logger.info(f"Using existing download URL for request {request_id} (no expiration info)")
+        return {
+            "download_url": synthetic_dataset.download_url,
+            "file_name": synthetic_dataset.file_name,
+            "file_size": synthetic_dataset.file_size,
+            "file_format": synthetic_dataset.file_format
+        }
+    
+    # Si pas d'URL ou URL expirée, essayer d'en générer une nouvelle
+    if not synthetic_dataset.storage_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Fichier de données synthétiques non trouvé dans le stockage"
+        )
+    
+    # Générer une URL de téléchargement signée depuis Supabase
+    try:
+        download_url = await storage_service.get_download_url(synthetic_dataset.storage_path)
+        if download_url:
+            # Mettre à jour l'URL et l'expiration dans la base de données
+            from datetime import datetime, timezone, timedelta
+            synthetic_dataset.download_url = download_url
+            synthetic_dataset.url_expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+            db.commit()
+            logger.info(f"Generated new download URL for request {request_id}")
+        else:
+            # Si la génération d'URL signée échoue, créer une URL de fallback
+            # qui passe par notre backend
+            fallback_url = f"{request.url.scheme}://{request.url.netloc}/data/requests/{request_id}/download-direct"
+            logger.warning(f"Using fallback direct download URL for request {request_id}")
+            return {
+                "download_url": fallback_url,
+                "file_name": synthetic_dataset.file_name,
+                "file_size": synthetic_dataset.file_size,
+                "file_format": synthetic_dataset.file_format
+            }
+            
+        return {
+            "download_url": download_url,
+            "file_name": synthetic_dataset.file_name,
+            "file_size": synthetic_dataset.file_size,
+            "file_format": synthetic_dataset.file_format
+        }
+    except Exception as e:
+        logger.error(f"Erreur lors de la génération de l'URL de téléchargement: {str(e)}")
+        # Si génération échoue mais qu'on a une URL existante, l'utiliser quand même
+        if synthetic_dataset.download_url:
+            logger.warning(f"Fallback to existing URL for request {request_id}")
+            return {
+                "download_url": synthetic_dataset.download_url,
+                "file_name": synthetic_dataset.file_name,
+                "file_size": synthetic_dataset.file_size,
+                "file_format": synthetic_dataset.file_format
+            }
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Erreur lors de la génération de l'URL de téléchargement: {str(e)}"
+            )
+
+def get_base_url_from_request(request: Request) -> str:
+    """
+    Détermine dynamiquement l'URL de base à partir de la requête HTTP actuelle
+    """
+    host = request.headers.get("host", "localhost:8000")
+    scheme = request.headers.get("x-forwarded-proto", "http")
+    
+    # Log pour le débogage
+    logger.info(f"Requête reçue de: {scheme}://{host}")
+    
+    # Si l'hôte est une adresse IP locale avec un port, on l'utilise directement
+    if ":" in host and (host.startswith("127.") or host.startswith("192.168.") or host.startswith("10.")):
+        return f"{scheme}://{host}"
+    
+    # Sinon, on utilise la configuration
+    return settings.BACKEND_BASE_URL
+
+@router.get("/requests/{request_id}/download-token")
+async def get_download_token(
+    request_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Génère un token de téléchargement temporaire pour éviter les problèmes d'authentification
+    """
+    import uuid
+    from datetime import datetime, timezone, timedelta
+    
+    # Vérifier que la requête existe et appartient à l'utilisateur
+    data_request = db.query(DataRequest).filter(
+        DataRequest.id == request_id,
+        DataRequest.user_id == current_user.id
+    ).first()
+    
+    if not data_request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Requête non trouvée"
+        )
+    
+    if data_request.status != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La génération n'est pas terminée"
+        )
+    
+    # Générer un token temporaire (UUID)
+    download_token = str(uuid.uuid4())
+    
+    # Stocker le token temporairement (vous pourriez utiliser Redis ou une table en base)
+    # Pour simplifier, on va le stocker dans la base de données
+    
+    # Vérifier que le dataset existe
+    synthetic_dataset = db.query(SyntheticDataset).filter(
+        SyntheticDataset.request_id == request_id,
+        SyntheticDataset.user_id == current_user.id
+    ).first()
+    
+    if not synthetic_dataset:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Dataset synthétique non trouvé"
+        )
+    
+    # Stocker le token dans le dataset (ajout d'un champ temporaire)
+    synthetic_dataset.download_token = download_token
+    synthetic_dataset.token_expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)  # 15 minutes
+    db.commit()
+    
+    logger.info(f"Generated download token for request {request_id}")
+    
+    # Utiliser l'URL de base déterminée dynamiquement
+    base_url = get_base_url_from_request(request)
+    download_url = f"{base_url}/data/download-with-token/{download_token}"
+    
+    logger.info(f"URL de téléchargement générée: {download_url}")
+    
+    return {
+        "download_token": download_token,
+        "download_url": download_url,
+        "expires_in_minutes": 15
+    }
+
+@router.get("/download-with-token/{token}")
+async def download_with_token(
+    token: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Endpoint public pour télécharger un fichier avec un token temporaire
+    """
+    import requests
+    from fastapi.responses import StreamingResponse, RedirectResponse
+    from datetime import datetime, timezone
+    
+    # Logging pour le débogage
+    client_host = request.client.host if request.client else "unknown"
+    client_headers = dict(request.headers)
+    logger.info(f"Téléchargement demandé avec token {token} depuis {client_host}")
+    logger.info(f"Headers: {client_headers}")
+    
+    # Rechercher le dataset avec ce token
+    synthetic_dataset = db.query(SyntheticDataset).filter(
+        SyntheticDataset.download_token == token
+    ).first()
+    
+    if not synthetic_dataset:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Token de téléchargement invalide"
+        )
+    
+    # Vérifier que le token n'est pas expiré
+    if synthetic_dataset.token_expires_at:
+        current_time = datetime.now(timezone.utc)
+        expires_at = synthetic_dataset.token_expires_at
+        
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        
+        if expires_at < current_time:
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail="Token de téléchargement expiré"
+            )
+    
+    if not synthetic_dataset.storage_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Fichier non trouvé dans le stockage"
+        )
+    
+    # Télécharger directement depuis Supabase
+    try:
+        supabase_url = settings.SUPABASE_URL
+        bucket_name = settings.SUPABASE_BUCKET_NAME
+        service_key = settings.SUPABASE_KEY
+        
+        # URL directe pour le téléchargement
+        download_url = f"{supabase_url}/storage/v1/object/{bucket_name}/{synthetic_dataset.storage_path}"
+        
+        headers = {
+            'Authorization': f'Bearer {service_key}',
+            'apikey': service_key
+        }
+        
+        logger.info(f"Téléchargement depuis Supabase avec token: {download_url}")
+        
+        # Option 1: Streaming via le backend (méthode préférée)
+        try:
+            response = requests.get(download_url, headers=headers, stream=True, timeout=30)
+            
+            if response.status_code == 200:
+                content_type = "text/csv"
+                if synthetic_dataset.file_format == "json":
+                    content_type = "application/json"
+                elif synthetic_dataset.file_format == "parquet":
+                    content_type = "application/octet-stream"
+                
+                def generate():
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            yield chunk
+                
+                # Nettoyer le token après utilisation
+                synthetic_dataset.download_token = None
+                synthetic_dataset.token_expires_at = None
+                db.commit()
+                
+                logger.info(f"Streaming réussi pour le fichier {synthetic_dataset.file_name}")
+                
+                return StreamingResponse(
+                    generate(),
+                    media_type=content_type,
+                    headers={
+                        "Content-Disposition": f"attachment; filename={synthetic_dataset.file_name}",
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                        "Pragma": "no-cache",
+                        "Expires": "0"
+                    }
+                )
+            else:
+                logger.error(f"Échec du téléchargement depuis Supabase: {response.status_code} - {response.text}")
+                
+                # Option 2: URL signée pour téléchargement direct
+                logger.info("Tentative avec URL signée...")
+                
+                # Initialiser le service de stockage
+                storage = SimpleSupabaseStorage()
+                
+                # Générer une URL signée pour accès direct
+                signed_url = await storage.get_download_url(synthetic_dataset.storage_path, expires_in=900)  # 15 minutes
+                
+                if signed_url:
+                    logger.info(f"URL signée générée: {signed_url[:50]}...")
+                    
+                    # Nettoyer le token
+                    synthetic_dataset.download_token = None
+                    synthetic_dataset.token_expires_at = None
+                    db.commit()
+                    
+                    # Rediriger vers l'URL de téléchargement direct
+                    return RedirectResponse(url=signed_url)
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Impossible de générer une URL de téléchargement"
+                    )
+        except Exception as stream_error:
+            logger.error(f"Erreur de streaming: {str(stream_error)}")
+            
+            # Option 3: URL publique directe si accessible
+            try:
+                public_url = f"{supabase_url}/storage/v1/object/public/{bucket_name}/{synthetic_dataset.storage_path}"
+                logger.info(f"Tentative avec URL publique: {public_url}")
+                
+                # Test rapide pour voir si l'URL publique fonctionne
+                test_response = requests.head(public_url, timeout=5)
+                
+                if test_response.status_code == 200:
+                    # Nettoyer le token
+                    synthetic_dataset.download_token = None
+                    synthetic_dataset.token_expires_at = None
+                    db.commit()
+                    
+                    # Rediriger vers l'URL publique
+                    logger.info(f"Redirection vers URL publique: {public_url}")
+                    return RedirectResponse(url=public_url)
+            except Exception as public_url_error:
+                logger.error(f"Erreur avec URL publique: {str(public_url_error)}")
+            
+            # Si toutes les tentatives échouent
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Impossible de télécharger le fichier: {str(stream_error)}"
+            )
+    except Exception as e:
+        logger.error(f"Erreur lors du téléchargement du fichier: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur lors du téléchargement: {str(e)}"
+        )
+     
+
+@router.get("/requests/{request_id}/download-direct")
+async def download_synthetic_data_direct(
+    request_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Télécharge directement les données synthétiques via l'API REST Supabase optimisée
+    """
+    import requests
+    from fastapi.responses import StreamingResponse
+    
+    # Vérifier que la requête existe et appartient à l'utilisateur
+    data_request = db.query(DataRequest).filter(
+        DataRequest.id == request_id,
+        DataRequest.user_id == current_user.id
+    ).first()
+    
+    if not data_request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Requête non trouvée"
+        )
+    
+    if data_request.status != "completed":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="La génération n'est pas terminée"
@@ -494,104 +996,58 @@ async def download_synthetic_data(
             detail="Fichier de données synthétiques non trouvé dans le stockage"
         )
     
-    # Générer une URL de téléchargement signée depuis Supabase
+    # Télécharger directement depuis Supabase via l'API REST
     try:
-        download_url = await storage_service.get_download_url(synthetic_dataset.storage_path)
-        return {
-            "download_url": download_url,
-            "file_name": synthetic_dataset.file_name,
-            "file_size": synthetic_dataset.file_size,
-            "file_format": synthetic_dataset.file_format
+        # URL de téléchargement direct via l'API REST Supabase
+        supabase_url = settings.SUPABASE_URL
+        bucket_name = settings.SUPABASE_BUCKET_NAME
+        service_key = settings.SUPABASE_KEY
+        
+        # URL directe pour l'objet
+        download_url = f"{supabase_url}/storage/v1/object/{bucket_name}/{synthetic_dataset.storage_path}"
+        
+        # Headers avec authentification
+        headers = {
+            'Authorization': f'Bearer {service_key}',
+            'apikey': service_key
         }
+        
+        logger.info(f"Downloading from Supabase: {download_url}")
+        
+        # Effectuer la requête vers Supabase
+        response = requests.get(download_url, headers=headers, stream=True)
+        
+        if response.status_code == 200:
+            # Déterminer le type de contenu
+            content_type = "text/csv"
+            if synthetic_dataset.file_format == "json":
+                content_type = "application/json"
+            elif synthetic_dataset.file_format == "parquet":
+                content_type = "application/octet-stream"
+            
+            # Streamer la réponse directement depuis Supabase
+            def generate():
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        yield chunk
+            
+            return StreamingResponse(
+                generate(),
+                media_type=content_type,
+                headers={
+                    "Content-Disposition": f"attachment; filename={synthetic_dataset.file_name}"
+                }
+            )
+        else:
+            logger.error(f"Download failed from Supabase: {response.status_code} - {response.text}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Impossible de télécharger le fichier depuis Supabase: {response.status_code}"
+            )
+        
     except Exception as e:
-        logger.error(f"Erreur lors de la génération de l'URL de téléchargement: {str(e)}")
+        logger.error(f"Erreur lors du téléchargement direct: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erreur lors de la génération de l'URL de téléchargement: {str(e)}"
+            detail=f"Erreur lors du téléchargement: {str(e)}"
         )
-
-# @router.put("/requests/{request_id}/approve")
-# def approve_request(
-#     request_id: int,
-#     db: Session = Depends(get_db),
-#     current_user: User = Depends(get_current_user)
-# ):
-#     """
-#     Approuver une requête (Admin seulement)
-#     """
-#     # Vérifier que l'utilisateur est admin
-#     if current_user.role != "admin":
-#         raise HTTPException(status_code=403, detail="Accès refusé. Admin requis.")
-    
-#     # Récupérer la requête
-#     request = db.query(DataRequest).filter(DataRequest.id == request_id).first()
-    
-#     if not request:
-#         raise HTTPException(status_code=404, detail="Requête non trouvée")
-    
-#     if request.status != "pending":
-#         raise HTTPException(status_code=400, detail="Seules les requêtes en attente peuvent être approuvées")
-    
-#     # Approuver
-#     request.status = "approved"
-#     request.approved_by = current_user.id
-#     request.approved_at = datetime.utcnow()
-    
-#     db.commit()
-#     db.refresh(request)
-    
-#     # Envoyer une notification à l'utilisateur
-#     try:
-#         NotificationService.send_notification(
-#             db=db,
-#             user_id=request.user_id,
-#             message=f"Votre requête '{request.request_name}' a été approuvée. Vous pouvez maintenant lancer la génération."
-#         )
-#     except Exception as notif_error:
-#         logger.warning(f"Failed to send approval notification: {notif_error}")
-    
-#     return {"message": "Requête approuvée avec succès", "request_id": request_id}
-
-# @router.put("/requests/{request_id}/reject") 
-# def reject_request(
-#     request_id: int,
-#     rejection_reason: str,
-#     db: Session = Depends(get_db),
-#     current_user: User = Depends(get_current_user)
-# ):
-#     """
-#     Rejeter une requête (Admin seulement)
-#     """
-#     # Vérifier que l'utilisateur est admin
-#     if current_user.role != "admin":
-#         raise HTTPException(status_code=403, detail="Accès refusé. Admin requis.")
-    
-#     # Récupérer la requête
-#     request = db.query(DataRequest).filter(DataRequest.id == request_id).first()
-    
-#     if not request:
-#         raise HTTPException(status_code=404, detail="Requête non trouvée")
-    
-#     if request.status != "pending":
-#         raise HTTPException(status_code=400, detail="Seules les requêtes en attente peuvent être rejetées")
-    
-#     # Rejeter
-#     request.status = "rejected"
-#     request.approved_by = current_user.id
-#     request.approved_at = datetime.utcnow()
-#     request.rejection_reason = rejection_reason
-    
-#     db.commit()
-#     db.refresh(request)
-    
-#     # Envoyer une notification à l'utilisateur
-#     try:
-#         NotificationService.send_notification(
-#             db=db,
-#             user_id=request.user_id,
-#             message=f"Votre requête '{request.request_name}' a été rejetée. Raison: {rejection_reason}"
-#         )
-#     except Exception as notif_error:
-#         logger.warning(f"Failed to send rejection notification: {notif_error}")
-    
-#     return {"message": "Requête rejetée", "request_id": request_id}
