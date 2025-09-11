@@ -173,7 +173,7 @@ const NotificationsScreen = () => {
 
   if (isLoading) {
     return (
-      <SafeAreaView className="flex-1 bg-gray-50">
+      <SafeAreaView className="flex-1 bg-gray-50 ">
         <View className="flex-1 justify-center items-center">
           <ActivityIndicator size="large" color="#6366f1" />
           <Text className="mt-4 text-gray-600">Chargement des notifications...</Text>
@@ -183,9 +183,9 @@ const NotificationsScreen = () => {
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-gray-50 mt-10">
+    <SafeAreaView className="flex-1 bg-gray-50 mt-10 web:w-1/2 web:self-center web:bg-transparent">
       {/* Header */}
-      <View className="bg-white px-4 py-6 border-b border-gray-200">
+      <View className="bg-white px-4 py-6 border-b border-gray-200 web:bg-transparent">
         <View className="flex-row items-center justify-between">
           <View className="flex-row items-center">
             <Text variant="headlineSmall" className="font-bold text-gray-900">

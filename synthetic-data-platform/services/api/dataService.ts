@@ -24,7 +24,7 @@ export interface DataRequest {
 export interface RequestParameters {
   id: number;
   request_id: number;
-  model_type: 'ctgan' | 'tvae';
+  model_type: 'ctgan' | 'tvae' | 'gaussian Coupla';
   epochs: number;
   batch_size: number;
   learning_rate: number;
@@ -147,7 +147,7 @@ class DataService {
     requestId : number,
     generationConfig: {
       dataset_id: number;
-      model_type: 'ctgan' | 'tvae';
+      model_type: 'ctgan' | 'tvae' | 'gaussian Coupla';
       sample_size: number;
       mode: 'simple' | 'optimization';
       epochs: number;

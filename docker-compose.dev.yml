@@ -1,0 +1,31 @@
+version: '3.8'
+
+# Development overrides for docker-compose.yml
+services:
+  backend:
+    environment:
+      DEBUG: "True"
+      RELOAD: "True"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./synth-backend:/app
+    ports:
+      - "8000:8000"  # Direct access for development
+
+  frontend:
+    environment:
+      NODE_ENV: development
+    command: npx expo start --web --port 8081 --dev-client
+    volumes:
+      - ./synthetic-data-platform:/app
+      - /app/node_modules
+    ports:
+      - "8081:8081"  # Direct access for development
+
+  postgres:
+    ports:
+      - "5432:5432"  # Direct access for development
+
+  redis:
+    ports:
+      - "6379:6379"  # Direct access for development

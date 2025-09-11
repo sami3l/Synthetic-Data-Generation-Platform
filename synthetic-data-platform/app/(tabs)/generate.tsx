@@ -64,6 +64,8 @@ export default function GenerateScreen() {
         }
       };
 
+      /////SSNM2025@
+
       console.log('🚀 Création demande avec paramètres:', requestData);
       const response = await authService.createRequest(requestData);
       console.log('✅ Demande créée:', response);
@@ -188,7 +190,7 @@ export default function GenerateScreen() {
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-gray-50">
+    <SafeAreaView className="flex-1 bg-gray-50 web:w-1/2 web:bg-gray-50 web:max-w-full web:self-center">
       {/* Header */}
       <View className="bg-white mt-12 px-6 py-4 border-b border-gray-200">
         <Text className="text-2xl font-bold text-gray-900">Nouvelle Demande</Text>
@@ -200,14 +202,9 @@ export default function GenerateScreen() {
       <ScrollView className="mb-12 flex-1">
         <View className="p-6">
           {/* Information sur le processus */}
-          <Card className="mb-6" style={{ backgroundColor: '#e3f2fd', borderColor: '#2196f3', borderWidth: 1 }}>
+          <Card className="mb-6 web:mb-6 bg-slate-300" style={{  borderColor: '#2196f3', borderWidth: 1 }}>
             <Card.Content className="py-4">
-              <View className="flex-row items-center mb-2">
-                <Text className="text-lg font-bold" style={{ color: '#1976d2' }}>
-                  📋 Processus d&apos;approbation
-                </Text>
-              </View>
-              <Text className="text-base" style={{ color: '#0d47a1', lineHeight: 20 }}>
+              <Text className="text-base text-slate-300" style={{ lineHeight: 20 }}>
                 Votre demande sera examinée par un administrateur avant d&apos;être traitée. 
                 Vous recevrez une notification dès qu&apos;elle sera approuvée et pourrez alors lancer la génération.
               </Text>

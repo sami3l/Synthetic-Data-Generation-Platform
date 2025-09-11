@@ -7,6 +7,7 @@ class AdminActionLog(Base):
     __tablename__ = "admin_action_logs"
     id = Column(Integer, primary_key=True, index=True)
     admin_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    admin_username = Column(String, nullable=True)
     action = Column(String, nullable=False)
     target_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     details = Column(Text, nullable=True)

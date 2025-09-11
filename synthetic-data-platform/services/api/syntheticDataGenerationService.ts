@@ -4,16 +4,21 @@ import { axiosInstance } from './axios.config';
 
 export interface GenerationConfigRequest {
   dataset_id: number;
-  model_type: 'ctgan' | 'tvae';
+  model_type: 'ctgan' | 'tvae' | 'gaussian_copula';
   sample_size: number;
   mode: 'simple' | 'optimization';
   
-  // Mode simple
+  // Mode simple - paramètres communs
   epochs?: number;
   batch_size?: number;
   learning_rate?: number;
   generator_lr?: number;
   discriminator_lr?: number;
+  
+  // Paramètres spécifiques à Gaussian Copula
+  distribution?: 'parametric' | 'bounded' | 'truncated';
+  categorical_transformer?: 'one_hot' | 'categorical';
+  default_distribution?: 'norm' | 'uniform' | 'truncnorm';
   
   // Mode optimisation
   optimization_method?: 'grid' | 'random' | 'bayesian';
@@ -117,78 +122,92 @@ export interface HyperparameterOption {
 export interface ModelHyperparameters {
   ctgan: HyperparameterOption[];
   tvae: HyperparameterOption[];
+  gaussian_copula: HyperparameterOption[];
 }
 
-export const AVAILABLE_HYPERPARAMETERS: ModelHyperparameters = {
+export const AVAILABLE_HYPERPARAMETERS: Record<string, HyperparameterOption[]> = {
   ctgan: [
     {
       name: 'epochs',
-      label: 'Nombre d\'époques',
-      description: 'Nombre d\'itérations d\'entraînement',
+      label: "Nombre d'époques",
+      description: "Nombre d'itérations d'entraînement",
       type: 'integer',
       default_value: 300,
       range: { min: 50, max: 1000, step: 50 }
     },
     {
       name: 'batch_size',
-      label: 'Taille du batch',
-      description: 'Nombre d\'échantillons traités simultanément',
-      type: 'categorical',
-      default_value: 500,
-      choices: [250, 500, 1000]
-    },
-    {
-      name: 'generator_lr',
-      label: 'Learning Rate Générateur',
-      description: 'Taux d\'apprentissage du générateur',
-      type: 'float',
-      default_value: 0.0002,
-      range: { min: 0.00001, max: 0.001 }
-    },
-    {
-      name: 'discriminator_lr',
-      label: 'Learning Rate Discriminateur',
-      description: 'Taux d\'apprentissage du discriminateur',
-      type: 'float',
-      default_value: 0.0002,
-      range: { min: 0.00001, max: 0.001 }
-    }
-  ],
-  tvae: [
-    {
-      name: 'epochs',
-      label: 'Nombre d\'époques',
-      description: 'Nombre d\'itérations d\'entraînement',
-      type: 'integer',
-      default_value: 300,
-      range: { min: 50, max: 1000, step: 50 }
-    },
-    {
-      name: 'batch_size',
-      label: 'Taille du batch',
-      description: 'Nombre d\'échantillons traités simultanément',
+      label: "Taille du batch",
+      description: "Nombre d'échantillons traités simultanément",
       type: 'categorical',
       default_value: 500,
       choices: [250, 500, 1000]
     },
     {
       name: 'learning_rate',
-      label: 'Learning Rate',
-      description: 'Taux d\'apprentissage global',
+      label: "Learning Rate",
+      description: "Taux d'apprentissage",
       type: 'float',
       default_value: 0.001,
       range: { min: 0.0001, max: 0.01 }
+    }
+  ],
+
+  tvae: [
+    {
+      name: 'epochs',
+      label: "Nombre d'époques",
+      description: "Nombre d'itérations d'entraînement",
+      type: 'integer',
+      default_value: 300,
+      range: { min: 50, max: 1000, step: 50 }
     },
     {
-      name: 'compress_dims',
-      label: 'Dimensions de compression',
-      description: 'Architecture des couches de compression',
+      name: 'batch_size',
+      label: "Taille du batch",
+      description: "Nombre d'échantillons traités simultanément",
       type: 'categorical',
-      default_value: [128, 128],
-      choices: [[64, 64], [128, 128], [256, 256]]
+      default_value: 500,
+      choices: [250, 500, 1000]
+    },
+    {
+      name: 'learning_rate',
+      label: "Learning Rate",
+      description: "Taux d'apprentissage",
+      type: 'float',
+      default_value: 0.001,
+      range: { min: 0.0001, max: 0.01 }
+    }
+  ],
+
+  gaussian_copula: [
+    {
+      name: 'distribution',
+      label: 'Distribution par défaut',
+      description: 'Type de distribution pour les variables numériques',
+      type: 'categorical',
+      default_value: 'parametric',
+      choices: ['parametric', 'bounded', 'truncated']
+    },
+    {
+      name: 'categorical_transformer',
+      label: 'Encodeur catégoriel',
+      description: 'Méthode de transformation pour les colonnes catégorielles',
+      type: 'categorical',
+      default_value: 'one_hot',
+      choices: ['one_hot', 'categorical']
+    },
+    {
+      name: 'default_distribution',
+      label: 'Distribution de fallback',
+      description: "Distribution utilisée si l'estimation échoue",
+      type: 'categorical',
+      default_value: 'norm',
+      choices: ['norm', 'uniform', 'truncnorm']
     }
   ]
 };
+
 
 // === Service principal ===
 
@@ -338,23 +357,36 @@ class SyntheticDataGenerationService {
   /**
    * Obtient les hyperparamètres disponibles pour un modèle
    */
-  getAvailableHyperparameters(modelType: 'ctgan' | 'tvae'): HyperparameterOption[] {
+  getAvailableHyperparameters(modelType: 'ctgan' | 'tvae' | 'gaussian_copula'): HyperparameterOption[] {
     return AVAILABLE_HYPERPARAMETERS[modelType];
   }
 
   /**
    * Génère une configuration par défaut
    */
-  getDefaultConfiguration(datasetId: number, modelType: 'ctgan' | 'tvae'): GenerationConfigRequest {
-    return {
+  getDefaultConfiguration(datasetId: number, modelType: 'ctgan' | 'tvae' | 'gaussian_copula'): GenerationConfigRequest {
+    const baseConfig = {
       dataset_id: datasetId,
       model_type: modelType,
       sample_size: 2000,
-      mode: 'simple',
-      epochs: 300,
-      batch_size: 500,
-      learning_rate: modelType === 'ctgan' ? 0.0002 : 0.001
+      mode: 'simple' as const
     };
+
+    if (modelType === 'gaussian_copula') {
+      return {
+        ...baseConfig,
+        distribution: 'parametric',
+        categorical_transformer: 'one_hot',
+        default_distribution: 'norm'
+      };
+    } else {
+      return {
+        ...baseConfig,
+        epochs: 300,
+        batch_size: 500,
+        learning_rate: modelType === 'ctgan' ? 0.0002 : 0.001
+      };
+    }
   }
 
   /**

@@ -274,51 +274,39 @@ export default function RequestDetailsScreen() {
           console.log('🔍 [RequestDetails] Utilisation dataset ID existant:', datasetId);
         } else {
           try {
-            // Récupérer tous les datasets de l'utilisateur
-            const datasets = await dataService.getUploadedDatasets();
+            const datasets = await dataService.getUploadedDatasets(request.dataset_name);
             console.log('🔍 [RequestDetails] Datasets disponibles:', datasets);
             
             if (datasets.length > 0) {
-              // Essayer de trouver un dataset qui correspond au nom exact ou partiellement
+              // Essayer de trouver un dataset qui correspond au nom
               let matchingDataset = datasets.find(d => 
                 d.original_filename?.toLowerCase().includes(request.dataset_name.toLowerCase()) ||
                 request.dataset_name.toLowerCase().includes(d.original_filename?.toLowerCase() || '')
               );
               
-              // Si aucun match, afficher la liste pour permettre une sélection
-              if (!matchingDataset) {
-                console.log('⚠️ [RequestDetails] Aucun dataset correspondant trouvé, utilisation du premier dataset');
-                
-                // Si au moins un dataset est disponible, utiliser le premier
-                if (datasets.length > 0) {
-                  matchingDataset = datasets[0];
-                }
-              }
+              // Si aucun match, prendre le premier dataset
+              const selectedDataset = matchingDataset || datasets[0];
+              datasetId = selectedDataset.id;
               
-              if (matchingDataset) {
-                datasetId = matchingDataset.id;
-                
-                console.log('🔍 [RequestDetails] Dataset sélectionné:', {
-                  id: datasetId,
-                  filename: matchingDataset.original_filename,
+              console.log('🔍 [RequestDetails] Dataset sélectionné automatiquement:', {
+                id: datasetId,
+                filename: selectedDataset.original_filename,
+                matching: !!matchingDataset
+              });
+              
+              // Mettre à jour la requête avec le dataset_id
+              try {
+                await dataService.updateDataRequest(Number(id), {
+                  request: {
+                    request_name: request.request_name,
+                    dataset_name: request.dataset_name,
+                    uploaded_dataset_id: datasetId
+                  }
                 });
-                
-                // Mettre à jour la requête avec le dataset_id
-                try {
-                  await dataService.updateDataRequest(Number(id), {
-                    request: {
-                      request_name: request.request_name,
-                      dataset_name: request.dataset_name,
-                      uploaded_dataset_id: datasetId // Important: ajouter l'ID du dataset
-                    }
-                  });
-                  console.log('✅ [RequestDetails] Requête mise à jour avec dataset ID:', datasetId);
-                } catch (updateError) {
-                  console.warn('⚠️ [RequestDetails] Impossible de mettre à jour la requête:', updateError);
-                  // Continue quand même avec la génération
-                }
-              } else {
-                throw new Error('Aucun dataset correspondant trouvé. Veuillez d\'abord uploader un dataset.');
+                console.log('✅ [RequestDetails] Requête mise à jour avec dataset ID:', datasetId);
+              } catch (updateError) {
+                console.warn('⚠️ [RequestDetails] Impossible de mettre à jour la requête:', updateError);
+                // Continue quand même avec la génération
               }
             } else {
               throw new Error('Aucun dataset disponible. Veuillez d\'abord uploader un dataset.');
@@ -345,19 +333,25 @@ export default function RequestDetailsScreen() {
         };
 
         console.log('🚀 [RequestDetails] Démarrage génération avec config:', generationConfig);
-        
-        // Utiliser la nouvelle signature de generateSyntheticData
-        const result = await dataService.generateSyntheticData(Number(id), generationConfig);
-        
-        console.log('✅ [RequestDetails] Génération démarrée:', result);
-        
-        // Update the request status
+
         setRequest(prev => ({
           ...prev!,
           status: 'processing',
           updated_at: new Date().toISOString()
         }));
+        
+        // Utiliser la nouvelle signature de generateSyntheticData
+        const result = await dataService.generateSyntheticData(Number(id), generationConfig);
+        
+        console.log('✅ [RequestDetails] Génération démarrée:', result);
 
+        setRequest(prev => ({
+          ...prev!,
+          status: 'completed',
+          updated_at: new Date().toISOString()
+        }));
+        
+        // Update the request status
         Toast.show({
           type: 'success',
           text1: 'Génération démarrée !',
@@ -707,7 +701,7 @@ export default function RequestDetailsScreen() {
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-gray-50">
+    <SafeAreaView className="flex-1 bg-gray-50 web:w-1/2 web:bg-transparent web:max-w-full web:self-center">
       {/* Header */}
       <View className="flex-row items-center px-5 py-4 bg-white border-b border-gray-200">
         <TouchableOpacity onPress={() => router.back()}>
@@ -875,6 +869,9 @@ export default function RequestDetailsScreen() {
                   <Text className="text-gray-500 font-medium mb-2">Description</Text>
                   <Text className="text-gray-700 leading-relaxed">
                     {request.description}
+                  </Text>
+                  <Text className="text-gray-500 text-sm mt-1">
+                    {request.results?.quality_score ? request.results.quality_score * 100 : 0}%
                   </Text>
                 </View>
               </>
@@ -1195,13 +1192,13 @@ export default function RequestDetailsScreen() {
                   </View>
                 </View>
 
-                {request.approved_by && (
+                {request.results?.metrics && (
                   <View className="flex-row justify-between">
                     <Text className="text-gray-500">
-                      {request.status === 'rejected' ? 'Rejected by' : 'Approved by'}
+                      {request.status === 'completed' ? 'Accuracy' : 'Status'}
                     </Text>
                     <Text className="text-gray-900 font-medium">
-                      {request.approved_by.full_name || request.approved_by.email}
+                      {request.status === 'completed' ? request.results.metrics.accuracy : getStatusLabel(request.status)}
                     </Text>
                   </View>
                 )}
@@ -1316,28 +1313,7 @@ export default function RequestDetailsScreen() {
                 </Button>
               </View>
         )}
-
-        {/* Regenerate Data Button (for completed requests) */}
-        {request.status === 'completed' && !isEditing && (
-          <View className="p-5">
-            <Button
-              mode="contained"
-              onPress={handleGenerateData}
-              loading={isGenerating}
-              disabled={isGenerating}
-              className="py-2 mb-3"
-              style={{ backgroundColor: '#059669' }}
-              labelStyle={{ color: '#FFFFFF', fontSize: 16, fontWeight: '700' }}
-            >
-              {isGenerating ? 'Regenerating...' : 'Regenerate Synthetic Data'}
-            </Button>
-            
-            <Text className="text-xs text-gray-500 text-center mt-1">
-              This will generate new synthetic data with the current parameters
-            </Text>
-          </View>
-        )}
-
+        
         {/* Error Card */}
         {request.status === 'failed' && request.error_message && (
           <Card className="mb-4">
@@ -1394,80 +1370,6 @@ export default function RequestDetailsScreen() {
         )}
       </ScrollView>
 
-      {/* Approval Dialog */}
-      {showApprovalDialog && (
-        <View className="absolute inset-0 bg-black/50 justify-center items-center z-50">
-          <View className="bg-white rounded-lg p-6 mx-4 min-w-80">
-            <Text className="text-lg font-bold text-gray-900 mb-4">
-              Approuver la demande
-            </Text>
-            <Text className="text-gray-600 mb-6">
-              Êtes-vous sûr de vouloir approuver cette demande de génération ?
-            </Text>
-            <View className="flex-row space-x-3">
-              <Button 
-                mode="outlined" 
-                onPress={() => setShowApprovalDialog(false)}
-                className="flex-1"
-              >
-                Annuler
-              </Button>
-              <Button 
-                mode="contained" 
-                onPress={handleApproveRequest}
-                className="flex-1"
-                buttonColor="#10b981"
-              >
-                Approuver
-              </Button>
-            </View>
-          </View>
-        </View>
-      )}
-
-      {/* Rejection Dialog */}
-      {showRejectionDialog && (
-        <View className="absolute inset-0 bg-black/50 justify-center items-center z-50">
-          <View className="bg-white rounded-lg p-6 mx-4 min-w-80">
-            <Text className="text-lg font-bold text-gray-900 mb-4">
-              Rejeter la demande
-            </Text>
-            <Text className="text-gray-600 mb-4">
-              Veuillez indiquer la raison du rejet :
-            </Text>
-            <TextInput
-              mode="outlined"
-              placeholder="Raison du rejet..."
-              multiline
-              numberOfLines={3}
-              className="mb-6"
-              value={rejectionReason}
-              onChangeText={setRejectionReason}
-            />
-            <View className="flex-row space-x-3">
-              <Button 
-                mode="outlined" 
-                onPress={() => {
-                  setShowRejectionDialog(false);
-                  setRejectionReason('');
-                }}
-                className="flex-1"
-              >
-                Annuler
-              </Button>
-              <Button 
-                mode="contained" 
-                onPress={() => handleRejectRequest(rejectionReason)}
-                className="flex-1"
-                buttonColor="#ef4444"
-                disabled={!rejectionReason.trim()}
-              >
-                Rejeter
-              </Button>
-            </View>
-          </View>
-        </View>
-      )}
     </SafeAreaView>
   );
 }

@@ -293,7 +293,7 @@ export default function DatasetsScreen() {
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-gray-50">
+    <SafeAreaView className="flex-1 bg-gray-50 web:w-1/2 web:bg-transparent web:max-w-full web:self-center">
       {/* Header */}
       <View className="bg-white px-4 py-6 border-b border-gray-200 mt-10">
         <View className="flex-row items-center justify-between">

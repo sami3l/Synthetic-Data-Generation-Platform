@@ -131,15 +131,15 @@ const RequestsScreen = () => {
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-gray-50 mt-10">
-      <View className="bg-white px-4 py-6 border-b border-gray-200">
-        <Text variant="headlineSmall" className="font-bold text-gray-900">
+    <SafeAreaView className="flex-1 bg-gray-50 mt-10 web:w-1/2 web:bg-gray-50 web:max-w-full web:self-center web:bg-transparent">
+      <View className="bg-white px-4 py-6 border-b border-gray-200  web:bg-transparent">
+        <Text variant="headlineSmall" className="font-bold text-gray-900 ">
           Mes Requêtes ({requests.length})
         </Text>
       </View>
 
       <ScrollView
-        className="flex-1 px-4"
+        className="flex-1 px-4  web:w-4/5 web:self-center"
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -165,7 +165,7 @@ const RequestsScreen = () => {
               onPress={() => router.push(`/requests/${request.id}`)}
               activeOpacity={0.7}
             >
-              <Card className="mb-3 bg-white">
+              <Card className="mb-3 bg-white ">
                 <Card.Content className="p-4">
                   <View className="flex-row justify-between items-start mb-3">
                     <Text variant="titleMedium" className="flex-1 font-semibold text-gray-900 mr-2">

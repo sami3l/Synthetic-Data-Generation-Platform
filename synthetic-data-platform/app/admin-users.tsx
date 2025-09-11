@@ -4,7 +4,7 @@ import UserManagement from '../components/UserManagement';
 
 const AdminUsersScreen: React.FC = () => {
   return (
-    <View className="flex-1">
+    <View className="flex-1 ">
       <UserManagement />
     </View>
   );

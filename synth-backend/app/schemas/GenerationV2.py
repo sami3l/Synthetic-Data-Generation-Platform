@@ -13,7 +13,7 @@ class GenerationConfigRequest(BaseModel):
     
     # Paramètres de base
     dataset_id: int = Field(..., description="ID du dataset à utiliser")
-    model_type: Literal['ctgan', 'tvae'] = Field(..., description="Type de modèle IA")
+    model_type: Literal['ctgan', 'tvae', 'gaussian_copula'] = Field(..., description="Type de modèle IA")
     sample_size: int = Field(..., ge=100, le=100000, description="Nombre d'échantillons à générer")
     
     # Mode de génération
@@ -25,6 +25,11 @@ class GenerationConfigRequest(BaseModel):
     learning_rate: Optional[float] = Field(None, ge=0.00001, le=0.01, description="Taux d'apprentissage")
     generator_lr: Optional[float] = Field(None, ge=0.00001, le=0.01, description="Learning rate du générateur (CTGAN)")
     discriminator_lr: Optional[float] = Field(None, ge=0.00001, le=0.01, description="Learning rate du discriminateur (CTGAN)")
+    
+    # Paramètres spécifiques à Gaussian Copula
+    distribution: Optional[Literal['parametric', 'bounded', 'truncated']] = Field(None, description="Type de distribution pour les variables numériques")
+    categorical_transformer: Optional[Literal['one_hot', 'categorical']] = Field(None, description="Méthode de transformation pour les colonnes catégorielles")
+    default_distribution: Optional[Literal['norm', 'uniform', 'truncnorm']] = Field(None, description="Distribution de fallback si l'estimation échoue")
     
     # Configuration d'optimisation (pour mode optimization)
     optimization_method: Optional[Literal['grid', 'random', 'bayesian']] = Field(None, description="Méthode d'optimisation")

@@ -7,14 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.user import User
-from app.dependencies.auth import get_current_user
 
-from app.schemas.user import UserCreate, UserLogin, UserResponse, UserUpdateRole, UserUpdateActive
+from app.schemas.user import  UserResponse, UserUpdateRole, UserUpdateActive
 from app.schemas.user_profile import UserProfileResponse
 from app.schemas.admin_action_log import AdminActionLogResponse
 from app.models import AdminActionLog, UserProfile
-from app.auth import jwt
-from passlib.context import CryptContext
 from app.dependencies.roles import require_role
 
 
@@ -48,7 +45,7 @@ def set_user_active(user_id: int, data: UserUpdateActive, db: Session = Depends(
     db.commit()
     db.refresh(user)
     # Log action
-    log = AdminActionLog(admin_id=current_user.id, action="set_active", target_user_id=user.id, details=f"is_active={data.is_active}")
+    log = AdminActionLog(admin_id=current_user.id, admin_username=current_user.username, action="set_active", target_user_id=user.id, details=f"is_active={data.is_active}")
     db.add(log)
     db.commit()
     return user
@@ -76,7 +73,7 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current_user: User 
         raise HTTPException(status_code=404, detail="User not found")
     
     # Log action AVANT la suppression
-    log = AdminActionLog(admin_id=current_user.id, action="delete_user", target_user_id=user_id, details=None)
+    log = AdminActionLog(admin_id=current_user.id, admin_username=current_user.username, action="delete_user", target_user_id=user_id, details=None)
     db.add(log)
     db.commit()
     
@@ -164,7 +161,7 @@ def admin_approve_request(request_id: int, db: Session = Depends(get_db), curren
     db.commit()
     db.refresh(req)
     # Log action
-    log = AdminActionLog(admin_id=current_user.id, action="approve_request", target_user_id=req.user_id, details=f"request_id={req.id}")
+    log = AdminActionLog(admin_id=current_user.id, admin_username=current_user.username, action="approve_request", target_user_id=req.user_id, details=f"request_id={req.id}")
     db.add(log)
     db.commit()
     return req
@@ -184,7 +181,7 @@ def admin_reject_request(request_id: int, rejection_reason: str, db: Session = D
     db.commit()
     db.refresh(req)
     # Log action
-    log = AdminActionLog(admin_id=current_user.id, action="reject_request", target_user_id=req.user_id, details=f"request_id={req.id};reason={rejection_reason}")
+    log = AdminActionLog(admin_id=current_user.id, admin_username=current_user.username, action="reject_request", target_user_id=req.user_id, details=f"request_id={req.id};reason={rejection_reason}")
     db.add(log)
     db.commit()
     return req
@@ -197,7 +194,7 @@ def delete_request(request_id: int, db: Session = Depends(get_db), current_user:
         raise HTTPException(status_code=404, detail="Requête non trouvée")
     
     # Log action avant suppression
-    log = AdminActionLog(admin_id=current_user.id, action="delete_request", target_user_id=req.user_id, details=f"request_id={req.id};name={req.request_name}")
+    log = AdminActionLog(admin_id=current_user.id, admin_username=current_user.username, action="delete_request", target_user_id=req.user_id, details=f"request_id={req.id};name={req.request_name}")
     db.add(log)
     
     # Supprimer la requête

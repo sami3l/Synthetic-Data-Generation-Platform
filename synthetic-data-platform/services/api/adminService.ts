@@ -23,9 +23,11 @@ export interface UserProfile {
 export interface AdminActionLog {
   id: number;
   admin_id: number;
+  admin_username?: string | null;
   action: string;
   target_user_id: number | null;
   details: string | null;
+  reason: string | null;
   created_at: string;
 }
 

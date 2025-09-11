@@ -37,7 +37,6 @@ class TVAEWrapper(BaseModelWrapper):
                 'batch_size': batch_size,
                 'enforce_min_max_values': True,
                 'enforce_rounding': True,
-                'verbose': True  # Enable verbose logging
             }
             
             # Add learning rate if supported by the TVAE version

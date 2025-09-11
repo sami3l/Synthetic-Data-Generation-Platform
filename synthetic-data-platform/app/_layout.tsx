@@ -5,6 +5,9 @@ import { Provider } from 'react-redux';
 import { Provider as PaperProvider, MD3LightTheme } from 'react-native-paper';
 import { store } from '../store/index';
 import { useNotifications } from '../hooks/useNotifications';
+import { View, Platform } from 'react-native';
+import { useAuth } from '../hooks/useAuth';
+import { Redirect } from 'expo-router';
 // import { useSessionExpiration } from '../hooks/useSessionExpiration';
 
 // Thème moderne et élégant
@@ -39,16 +42,71 @@ const modernTheme = {
 };
 
 function AppContent() {
+  const { user } = useAuth(); // Récupérer l'utilisateur depuis le store Redux
   useNotifications(); // Hook pour gérer les notifications push
   // useSessionExpiration(); // Hook pour gérer l'expiration de session
+
+    if (!user) {
+    return <Redirect href="/(auth)/login" />;
+  }
   
   return (
-    <Stack>
-      <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-      <Stack.Screen name="(tabs)" options={{ headerShown: false  }} />
-      <Stack.Screen name="profile" options={{headerShown: false  }} />
-      <Stack.Screen name="requests" options={{ headerShown: false  }} />
-      <Stack.Screen name='admin' options={{ headerShown: false }} />
+    <Stack
+      screenOptions={{
+        headerStyle: {
+          backgroundColor: Platform.OS === 'web' ? '#fff' : undefined,
+        },
+        headerShadowVisible: Platform.OS === 'web',
+        contentStyle: {
+          backgroundColor: Platform.OS === 'web' ? '#F9FAFB' : undefined,
+        },
+      }}
+    >
+      <Stack.Screen 
+        name="(auth)" 
+        options={{ 
+          headerShown: false,
+        }} 
+      />
+      <Stack.Screen 
+        name="(tabs)" 
+        options={{ 
+          headerShown: false,
+        }} 
+      />
+      <Stack.Screen 
+        name="profile" 
+        options={{
+          headerShown: Platform.OS === 'web',
+          headerTitle: "Profil",
+          headerTitleStyle: {
+            fontSize: 24,
+            fontWeight: '600',
+          },
+        }} 
+      />
+      <Stack.Screen 
+        name="requests" 
+        options={{
+          headerShown: Platform.OS === 'web',
+          headerTitle: "Requêtes",
+          headerTitleStyle: {
+            fontSize: 24,
+            fontWeight: '600',
+          },
+        }} 
+      />
+      <Stack.Screen 
+        name='admin' 
+        options={{
+          headerShown: Platform.OS === 'web',
+          headerTitle: "Administration",
+          headerTitleStyle: {
+            fontSize: 24,
+            fontWeight: '600',
+          },
+        }} 
+      />
     </Stack>
   );
 }

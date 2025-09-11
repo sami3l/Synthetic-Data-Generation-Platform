@@ -15,13 +15,18 @@ interface GenerationConfigProps {
 export interface GenerationConfig {
   // Paramètres de base
   dataset_id: number;
-  model_type: 'ctgan' | 'tvae';
+  model_type: 'ctgan' | 'tvae' | 'gaussian_copula';
   sample_size: number;
   
-  // Paramètres avancés
+  // Paramètres avancés communs
   epochs?: number;
   batch_size?: number;
   learning_rate?: number;
+  
+  // Paramètres spécifiques à Gaussian Copula
+  distribution?: 'parametric' | 'bounded' | 'truncated';
+  categorical_transformer?: 'one_hot' | 'categorical';
+  default_distribution?: 'norm' | 'uniform' | 'truncnorm';
   
   // Configuration d'optimisation
   optimization_method: 'none' | 'grid' | 'random' | 'bayesian';
@@ -38,7 +43,7 @@ const GenerationConfigComponent: React.FC<GenerationConfigProps> = ({
   disabled = false
 }) => {
   // États principaux
-  const [modelType, setModelType] = useState<'ctgan' | 'tvae'>('ctgan');
+  const [modelType, setModelType] = useState<'ctgan' | 'tvae' | 'gaussian_copula'>('ctgan');
   const [sampleSize, setSampleSize] = useState<number>(2000);
   const [isOptimizationEnabled, setIsOptimizationEnabled] = useState<boolean>(false);
   
@@ -48,19 +53,26 @@ const GenerationConfigComponent: React.FC<GenerationConfigProps> = ({
   const [selectedHyperparameters, setSelectedHyperparameters] = useState<string[]>(['epochs', 'batch_size']);
   
   // Paramètres manuels (pour mode simple)
-  const [manualEpochs] = useState<number>(300); // TODO: Ajouter slider
-  const [manualBatchSize] = useState<number>(500); // TODO: Ajouter slider
+  const [manualEpochs, setManualEpochs] = useState<number>(300);
+  const [manualBatchSize, setManualBatchSize] = useState<number>(500);
   const [manualLearningRate, setManualLearningRate] = useState<number>(0.0002);
 
-  const handleModelTypeChange = (newModelType: 'ctgan' | 'tvae') => {
+  // Paramètres manuels pour Gaussian Copula
+  const [gaussianDistribution, setGaussianDistribution] = useState<'parametric' | 'bounded' | 'truncated'>('parametric');
+  const [gaussianCategoricalTransformer, setGaussianCategoricalTransformer] = useState<'one_hot' | 'categorical'>('one_hot');
+  const [gaussianDefaultDistribution, setGaussianDefaultDistribution] = useState<'norm' | 'uniform' | 'truncnorm'>('norm');
+
+  const handleModelTypeChange = (newModelType: 'ctgan' | 'tvae' | 'gaussian_copula') => {
     setModelType(newModelType);
     // Réinitialiser les hyperparamètres sélectionnés selon le modèle
     if (newModelType === 'ctgan') {
       setSelectedHyperparameters(['epochs', 'batch_size']);
       setManualLearningRate(0.0002);
-    } else {
+    } else if (newModelType === 'tvae') {
       setSelectedHyperparameters(['epochs', 'batch_size']);
       setManualLearningRate(0.001);
+    } else if (newModelType === 'gaussian_copula') {
+      setSelectedHyperparameters(['distribution', 'categorical_transformer']);
     }
   };
 
@@ -95,23 +107,35 @@ const GenerationConfigComponent: React.FC<GenerationConfigProps> = ({
       config.n_trials = nTrials;
       config.hyperparameters = selectedHyperparameters;
     } else {
-      config.epochs = manualEpochs;
-      config.batch_size = manualBatchSize;
-      config.learning_rate = manualLearningRate;
+      // Paramètres pour mode simple selon le type de modèle
+      if (modelType === 'gaussian_copula') {
+        config.distribution = gaussianDistribution;
+        config.categorical_transformer = gaussianCategoricalTransformer;
+        config.default_distribution = gaussianDefaultDistribution;
+      } else {
+        config.epochs = manualEpochs;
+        config.batch_size = manualBatchSize;
+        config.learning_rate = manualLearningRate;
+      }
     }
 
     onStartGeneration(config);
   };
 
   const getEstimatedTimeTotal = (): string => {
-    const baseTime = sampleSize <= 2000 ? 5 : sampleSize <= 10000 ? 15 : 30;
+    let baseTime = sampleSize <= 2000 ? 5 : sampleSize <= 10000 ? 15 : 30;
+    
+    // Ajuster selon le type de modèle
+    if (modelType === 'gaussian_copula') {
+      baseTime *= 0.6; // Gaussian Copula est généralement plus rapide
+    }
     
     if (isOptimizationEnabled) {
       const optimizationMultiplier = nTrials * 0.8; // Chaque trial prend ~80% du temps de base
       return `~${Math.ceil(baseTime * optimizationMultiplier)} minutes`;
     }
     
-    return `~${baseTime} minutes`;
+    return `~${Math.ceil(baseTime)} minutes`;
   };
 
   return (
@@ -171,6 +195,26 @@ const GenerationConfigComponent: React.FC<GenerationConfigProps> = ({
               Bon pour données complexes
             </Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            className={`
+              flex-1 p-4 rounded-lg border-2
+              ${modelType === 'gaussian_copula' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'}
+              ${disabled ? 'opacity-60' : ''}
+            `}
+            onPress={() => handleModelTypeChange('gaussian_copula')}
+            disabled={disabled}
+          >
+            <Text className={`font-bold text-center ${modelType === 'gaussian_copula' ? 'text-blue-600' : 'text-gray-800'}`}>
+              Gaussian Copula
+            </Text>
+            <Text className={`text-xs text-center mt-1 ${modelType === 'gaussian_copula' ? 'text-blue-600' : 'text-gray-600'}`}>
+              Couplage Gaussien
+            </Text>
+            <Text className={`text-xs text-center mt-1 ${modelType === 'gaussian_copula' ? 'text-blue-500' : 'text-gray-500'}`}>
+              Bon pour données complexes
+            </Text>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -180,9 +224,6 @@ const GenerationConfigComponent: React.FC<GenerationConfigProps> = ({
           <View className="flex-1">
             <Text className="text-lg font-semibold text-gray-800">
               Optimisation automatique
-            </Text>
-            <Text className="text-sm text-gray-600">
-              Laisser l&apos;IA trouver les meilleurs paramètres
             </Text>
           </View>
           <Switch
@@ -197,11 +238,7 @@ const GenerationConfigComponent: React.FC<GenerationConfigProps> = ({
         {isOptimizationEnabled && (
           <View className="mt-4 p-3 bg-blue-50 rounded-lg">
             <Text className="text-sm text-blue-800 font-medium mb-2">
-              🔬 Mode optimisation activé
-            </Text>
-            <Text className="text-xs text-blue-700">
-              L&apos;IA testera automatiquement différentes combinaisons de paramètres pour 
-              trouver la configuration optimale pour vos données.
+              Choose your optimization settings
             </Text>
           </View>
         )}
@@ -256,32 +293,209 @@ const GenerationConfigComponent: React.FC<GenerationConfigProps> = ({
             Paramètres manuels
           </Text>
           <Text className="text-sm text-gray-600 mb-4">
-            Utilisez les valeurs par défaut ou ajustez selon vos besoins
+            Ajustez les paramètres selon vos besoins et contraintes
           </Text>
-          
-          <View className="space-y-4">
-            <View>
-              <Text className="text-sm font-medium text-gray-700 mb-1">Époques: {manualEpochs}</Text>
-              <View className="bg-gray-200 h-1 rounded-full">
-                <View 
-                  className="bg-blue-500 h-1 rounded-full" 
-                  style={{ width: `${(manualEpochs / 500) * 100}%` }}
-                />
+          {/* Paramètres pour CTGAN/TVAE */}
+          {(modelType === 'ctgan' || modelType === 'tvae') && (
+            <View className="space-y-4">
+              {/* Époques */}
+              <View className='mb-4'>
+                <Text className="text-base font-medium text-gray-700 mb-2">
+                  Nombre d&apos;époques : 
+                </Text>
+                <View className="flex-row gap-2 mb-2">
+                  {[100, 200, 300, 500, 1000].map((epochs) => (
+                    <TouchableOpacity
+                      key={epochs}
+                      className={`
+                        flex-1 p-2 rounded-lg border
+                        ${manualEpochs === epochs ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'}
+                      `}
+                      onPress={() => setManualEpochs(epochs)}
+                      disabled={disabled}
+                    >
+                      <Text className={`font-medium text-center text-xs ${manualEpochs === epochs ? 'text-blue-600' : 'text-gray-800'}`}>
+                        {epochs}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <View className='bg-gray-100 p-2 rounded-full min-w-min '>
+                  <Text className="text-xs text-center text-gray-500">Plage recommandée: 100-1000 (défaut: 300)</Text>
+                </View>
               </View>
-              <Text className="text-xs text-gray-500 mt-1">100 - 500 (défaut: 300)</Text>
-            </View>
-            
-            <View>
-              <Text className="text-sm font-medium text-gray-700 mb-1">Taille de batch: {manualBatchSize}</Text>
-              <View className="bg-gray-200 h-1 rounded-full">
-                <View 
-                  className="bg-blue-500 h-1 rounded-full" 
-                  style={{ width: `${((manualBatchSize - 250) / 750) * 100}%` }}
-                />
+              
+              {/* Taille de batch */}
+              <View className='mb-4'>
+                <Text className="text-base font-medium text-gray-700 mb-2">
+                  Taille de batch :
+                </Text>
+                <View className="flex-row gap-2 mb-2">
+                  {[250, 500, 1000, 1500, 2000].map((batch) => (
+                    <TouchableOpacity
+                      key={batch}
+                      className={`
+                        flex-1 p-2 rounded-lg border
+                        ${manualBatchSize === batch ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'}
+                      `}
+                      onPress={() => setManualBatchSize(batch)}
+                      disabled={disabled}
+                    >
+                      <Text className={`font-medium text-center text-xs ${manualBatchSize === batch ? 'text-blue-600' : 'text-gray-800'}`}>
+                        {batch}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                 <View className='bg-gray-100 p-2 rounded-full min-w-min '>
+                <Text className="text-xs text-center text-gray-500">Plage recommandée: 250-2000 (défaut: 500)</Text>
+                </View>
               </View>
-              <Text className="text-xs text-gray-500 mt-1">250 - 1000 (défaut: 500)</Text>
+
+              {/* Learning Rate */}
+              <View className='mb-4'>
+                <Text className="text-base font-medium text-gray-700 mb-2">
+                  Taux d&apos;apprentissage :
+                </Text>
+
+                <View className="flex-row gap-2 mb-2">
+                  {[0.0001, 0.0002, 0.0005, 0.001, 0.002].map((lr) => (
+                    <TouchableOpacity
+                      key={lr}
+                      className={`
+                        flex-1 p-2 rounded-lg border
+                        ${manualLearningRate === lr ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'}
+                      `}
+                      onPress={() => setManualLearningRate(lr)}
+                      disabled={disabled}
+                    >
+                      <Text className={`font-medium text-center text-xs ${manualLearningRate === lr ? 'text-blue-600' : 'text-gray-800'}`}>
+                        {lr}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                 <View className='bg-gray-100 p-2 rounded-full min-w-min '>
+                <Text className="text-xs text-center text-gray-500">
+                  Défaut: {modelType === 'ctgan' ? '0.0002' : '0.001'}
+                </Text>
+                </View>
+              </View>
             </View>
-          </View>
+          )}
+
+          {/* Paramètres pour Gaussian Copula */}
+          {modelType === 'gaussian_copula' && (
+            <View className="space-y-4">
+              {/* Distribution Type */}
+              <View className='mb-4'>
+                <Text className="text-lg font-medium text-gray-700 mb-2">
+                  Type de distribution
+                </Text>
+                <Text className="text-xs text-gray-500 mb-3">
+                  Méthode pour modéliser les variables numériques
+                </Text>
+                <View className="space-y-2">
+                  {[
+                    { value: 'parametric', label: 'Paramétrique', desc: 'Distributions standard (recommandé)' },
+                    { value: 'bounded', label: 'Bornée', desc: 'Pour données avec limites strictes' },
+                    { value: 'truncated', label: 'Tronquée', desc: 'Distributions coupées' }
+                  ].map((option) => (
+                    <TouchableOpacity
+                      key={option.value}
+                      className={`
+                        p-3 rounded-lg border mb-3
+                        ${gaussianDistribution === option.value ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'}
+                      `}
+                      onPress={() => setGaussianDistribution(option.value as any)}
+                      disabled={disabled}
+                    >
+                      <Text className={`font-medium ${gaussianDistribution === option.value ? 'text-blue-600' : 'text-gray-800'}`}>
+                        {option.label}
+                      </Text>
+                      <Text className={`text-xs ${gaussianDistribution === option.value ? 'text-blue-600' : 'text-gray-600'}`}>
+                        {option.desc}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              {/* Categorical Transformer */}
+              <View className='mb-4'>
+                <Text className="text-lg font-medium text-gray-700 mb-2">
+                  Encodage catégoriel
+                </Text>
+                <Text className="text-xs text-gray-500 mb-3">
+                  Méthode de transformation des colonnes catégorielles
+                </Text>
+                <View className="flex-row gap-3">
+                  <TouchableOpacity
+                    className={`
+                      flex-1 p-3 rounded-lg border
+                      ${gaussianCategoricalTransformer === 'one_hot' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'}
+                    `}
+                    onPress={() => setGaussianCategoricalTransformer('one_hot')}
+                    disabled={disabled}
+                  >
+                    <Text className={`font-medium text-center ${gaussianCategoricalTransformer === 'one_hot' ? 'text-blue-600' : 'text-gray-800'}`}>
+                      One-Hot
+                    </Text>
+                    <Text className={`text-xs text-center ${gaussianCategoricalTransformer === 'one_hot' ? 'text-blue-600' : 'text-gray-600'}`}>
+                      Recommandé
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    className={`
+                      flex-1 p-3 rounded-lg border
+                      ${gaussianCategoricalTransformer === 'categorical' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'}
+                    `}
+                    onPress={() => setGaussianCategoricalTransformer('categorical')}
+                    disabled={disabled}
+                  >
+                    <Text className={`font-medium text-center ${gaussianCategoricalTransformer === 'categorical' ? 'text-blue-600' : 'text-gray-800'}`}>
+                      Catégoriel
+                    </Text>
+                    <Text className={`text-xs text-center ${gaussianCategoricalTransformer === 'categorical' ? 'text-blue-600' : 'text-gray-600'}`}>
+                      Compact
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Default Distribution */}
+              <View>
+                <Text className="text-lg font-medium text-gray-700 mb-2">
+                  Distribution de fallback
+                </Text>
+                <Text className="text-xs text-gray-500 mb-3">
+                  Utilisée si l&apos;estimation automatique échoue
+                </Text>
+                <View className="flex-row gap-2">
+                  {[
+                    { value: 'norm', label: 'Normale' },
+                    { value: 'uniform', label: 'Uniforme' },
+                    { value: 'truncnorm', label: 'Normale tronquée' }
+                  ].map((option) => (
+                    <TouchableOpacity
+                      key={option.value}
+                      className={`
+                        flex-1 p-3 rounded-lg border
+                        ${gaussianDefaultDistribution === option.value ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'}
+                      `}
+                      onPress={() => setGaussianDefaultDistribution(option.value as any)}
+                      disabled={disabled}
+                    >
+                      <Text className={`font-medium text-center text-xs ${gaussianDefaultDistribution === option.value ? 'text-blue-600' : 'text-gray-800'}`}>
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </View>
+          )}
         </View>
       )}
 
@@ -318,6 +532,35 @@ const GenerationConfigComponent: React.FC<GenerationConfigProps> = ({
                 </Text>
               </>
             )}
+            {!isOptimizationEnabled && (
+              <>
+                {modelType === 'gaussian_copula' ? (
+                  <>
+                    <Text className="text-sm text-gray-700">
+                      <Text className="font-medium">Distribution:</Text> {gaussianDistribution}
+                    </Text>
+                    <Text className="text-sm text-gray-700">
+                      <Text className="font-medium">Encodage:</Text> {gaussianCategoricalTransformer}
+                    </Text>
+                    <Text className="text-sm text-gray-700">
+                      <Text className="font-medium">Fallback:</Text> {gaussianDefaultDistribution}
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Text className="text-sm text-gray-700">
+                      <Text className="font-medium">Époques:</Text> {manualEpochs}
+                    </Text>
+                    <Text className="text-sm text-gray-700">
+                      <Text className="font-medium">Batch size:</Text> {manualBatchSize}
+                    </Text>
+                    <Text className="text-sm text-gray-700">
+                      <Text className="font-medium">Learning rate:</Text> {manualLearningRate}
+                    </Text>
+                  </>
+                )}
+              </>
+            )}
             <Text className="text-sm text-gray-700">
               <Text className="font-medium">Temps estimé:</Text> {getEstimatedTimeTotal()}
             </Text>
@@ -342,7 +585,7 @@ const GenerationConfigComponent: React.FC<GenerationConfigProps> = ({
               : 'text-white'
             }
           `}>
-            � Soumettre la demande
+           Soumettre la demande
           </Text>
           <Text className={`
             text-sm mt-1

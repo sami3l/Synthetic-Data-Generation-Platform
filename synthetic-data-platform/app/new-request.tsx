@@ -807,7 +807,6 @@ export default function NewRequestScreen() {
             disabled={isLoading || !formData.dataset_id}
             className="flex-1 rounded-xl py-1"
             labelStyle={{ fontSize: 16, fontWeight: '600' , color: '#FFFFFF' }}
-            icon={isLoading ? undefined : "plus-circle"}
             style={{ 
               backgroundColor:"#000000",
               elevation: 2

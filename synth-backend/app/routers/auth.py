@@ -1,3 +1,4 @@
+from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -9,7 +10,7 @@ from app.models.UserProfile import UserProfile
 
 from app.schemas.user_profile import UserProfileUpdate
 from app.schemas.user import UserCreate, UserLogin, UserResponse
-from app.auth.jwt import create_access_token
+from app.auth.jwt import create_access_token, verify_access_token
 from passlib.context import CryptContext
 
 from app.schemas.user_profile import UserProfileResponse
@@ -77,11 +78,19 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     # Create JWT with subject = user email
-    access_token = create_access_token(data={"sub": user.email})
-    
+    access_token = create_access_token(
+    data={"sub": user.email, "id": user.id}
+)
+
+    refresh_token = create_access_token(
+    data={"sub": user.email, "id": user.id},
+    expires_delta=timedelta(days=30)
+)
+
     # Return token with user info directly
     return {
         "access_token": access_token, 
+        "refresh_token": refresh_token,
         "token_type": "bearer",
         "user": {
             "id": user.id,
@@ -91,6 +100,17 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
             "is_active": user.is_active
         }
     }
+
+
+@router.post("/refresh")
+async def refresh_token(refresh_token: str, db: AsyncSession = Depends(get_async_db)):
+    payload = verify_access_token(refresh_token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    # issue new access token
+    new_token = create_access_token(data={"sub": payload["sub"], "id": payload["id"]})
+    return {"access_token": new_token, "token_type": "bearer"}
 
 
 @router.get("/profile", response_model=UserProfileResponse)

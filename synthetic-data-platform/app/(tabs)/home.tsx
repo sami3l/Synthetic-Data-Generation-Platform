@@ -68,7 +68,7 @@ export default function HomeScreen() {
 
   return (
     <ScrollView
-      className="flex-1 mt-12 bg-gray-50 px-4"
+      className="flex-1 mt-12 bg-gray-50 px-4 web:w-1/2 web:bg-transparent web:max-w-full web:self-center"
       refreshControl={
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
       }
@@ -116,7 +116,7 @@ export default function HomeScreen() {
       {/* Create New Button */}
       <Button
         mode="contained"
-        onPress={() => router.push('/new-request')}
+        onPress={() => router.push('/generate')}
         className="mb-6 rounded-lg py-2"
         icon="plus"
       >

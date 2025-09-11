@@ -9,7 +9,7 @@ import {
 } from '@/services/api/syntheticDataGenerationService';
 
 interface HyperparameterSelectorProps {
-  modelType: 'ctgan' | 'tvae';
+  modelType: 'ctgan' | 'tvae' | 'gaussian_copula';
   selectedHyperparameters: string[];
   onSelectionChange: (selected: string[]) => void;
   disabled?: boolean;
@@ -49,13 +49,27 @@ const HyperparameterSelector: React.FC<HyperparameterSelectorProps> = ({
   };
 
   const selectRecommended = () => {
-    if (disabled) return;
-    // Sélectionner epochs et batch_size par défaut comme recommandés
-    const recommended = ['epochs', 'batch_size'];
-    onSelectionChange(recommended.filter(h => 
-      availableHyperparameters.some(ah => ah.name === h)
-    ));
-  };
+  if (disabled) return;
+
+  let recommended: string[];
+
+  switch (modelType) {
+    case 'ctgan':
+    case 'tvae':
+      recommended = ['epochs', 'batch_size'];
+      break;
+    case 'gaussian_copula':
+      recommended = ['distribution', 'categorical_transformer'];
+      break;
+    default:
+      recommended = [];
+  }
+
+  onSelectionChange(
+    recommended.filter(h => availableHyperparameters.some(ah => ah.name === h))
+  );
+};
+
 
   const renderHyperparameterItem = (hyperparam: HyperparameterOption) => {
     const isSelected = selectedHyperparameters.includes(hyperparam.name);

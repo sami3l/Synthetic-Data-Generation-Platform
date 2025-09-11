@@ -70,7 +70,7 @@ export default function EditProfileScreen() {
   }
 
   return (
-    <ScrollView className="flex-1 p-4 bg-gray-50">
+    <ScrollView className="flex-1 p-4 bg-gray-50 web:w-1/2 web:bg-transparent web:max-w-full web:self-center">
       <View className="mb-6">
         <Text className="text-lg font-bold mb-4">Edit Profile</Text>
         

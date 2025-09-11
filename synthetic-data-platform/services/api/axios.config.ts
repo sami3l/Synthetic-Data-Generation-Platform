@@ -7,6 +7,7 @@ import NavigationService from '../NavigationService';
 // Variable pour éviter les redirections multiples
 let isRedirecting = false;
 
+
 // Utiliser la variable d'environnement ou fallback
 const baseURL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8000';
 
@@ -38,6 +39,7 @@ axiosInstance.interceptors.request.use(
       console.log(`🔄 Requête ${config.method?.toUpperCase()} vers ${config.url}`);
       
       const token = await AsyncStorage.getItem('token');
+      console.log('📦 Token from storage:', token);
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
@@ -54,8 +56,8 @@ axiosInstance.interceptors.request.use(
 
 // Intercepteur pour l'instance de génération
 axiosInstanceLongTimeout.interceptors.request.use(
-  async (config) => {
-    try {
+async (config) => {
+  try {
       console.log(`🔄 Requête LONGUE ${config.method?.toUpperCase()} vers ${config.url}`);
       
       const token = await AsyncStorage.getItem('token');

@@ -1,0 +1,95 @@
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+/* Styles spécifiques Web */
+@media (min-width: 768px) {
+  /* Typographie */
+  .web\:text-heading {
+    @apply text-2xl font-bold tracking-tight text-gray-900;
+  }
+  
+  .web\:text-subheading {
+    @apply text-lg font-medium text-gray-700;
+  }
+
+  /* Mise en page */
+  .web\:section {
+    @apply bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6;
+  }
+
+  .web\:card {
+    @apply bg-white rounded-xl border border-gray-100 overflow-hidden transition-all duration-200;
+  }
+
+  .web\:card-hover {
+    @apply hover:shadow-lg hover:scale-105 transform transition-all duration-200;
+  }
+
+  /* Navigation */
+  .web\:nav-item {
+    @apply px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200;
+  }
+
+  .web\:nav-item-active {
+    @apply bg-primary-50 text-primary-700 font-medium;
+  }
+
+  /* Formulaires */
+  .web\:input {
+    @apply rounded-lg border-gray-300 focus:ring-2 focus:ring-primary-500 focus:border-primary-500;
+  }
+
+  .web\:button {
+    @apply rounded-lg px-4 py-2 font-medium transition-colors duration-200;
+  }
+
+  /* Grilles */
+  .web\:grid-2 {
+    @apply grid grid-cols-2 gap-6;
+  }
+
+  .web\:grid-3 {
+    @apply grid grid-cols-3 gap-6;
+  }
+
+  .web\:grid-4 {
+    @apply grid grid-cols-4 gap-6;
+  }
+
+  /* Tables */
+  .web\:table {
+    @apply min-w-full divide-y divide-gray-200;
+  }
+
+  .web\:table-header {
+    @apply bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider;
+  }
+
+  .web\:table-cell {
+    @apply whitespace-nowrap px-6 py-4 text-sm text-gray-900;
+  }
+}
+
+/* Animations */
+.fade-enter {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.fade-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 300ms, transform 300ms;
+}
+
+.fade-exit {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.fade-exit-active {
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 300ms, transform 300ms;
+}

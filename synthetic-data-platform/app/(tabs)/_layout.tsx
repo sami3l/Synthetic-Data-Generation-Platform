@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react';
 import { authService } from '../../services/api/authService';
 
 
+
 export default function TabsLayout() {
   const theme = useTheme();  
   const { user } = useAuth();
@@ -36,6 +37,7 @@ export default function TabsLayout() {
     screenOptions={{
       headerShown: false,
       tabBarActiveTintColor: theme.colors.primary,
+      // tabBarStyle: { width: '50%', borderTopWidth: 1, borderTopColor: '#e5e7eb', backgroundColor: '#ffffff', alignSelf: 'center' },
     }}>
       <Tabs.Screen
         name="home"
@@ -90,6 +92,7 @@ export default function TabsLayout() {
         }}
       />
     </Tabs>
+    
  
   );
 }

@@ -516,6 +516,8 @@ def _estimate_generation_time(config: GenerationConfigRequest) -> int:
     # Ajuster selon le modèle
     if config.model_type == 'tvae':
         time_from_size *= 1.2  # TVAE est généralement plus lent
+    elif config.model_type == 'gaussian_copula':
+        time_from_size *= 0.8  # Gaussian Copula est généralement plus rapide
     
     return max(2, int(time_from_size))
 

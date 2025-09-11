@@ -100,16 +100,10 @@ const SampleSizeSelector: React.FC<SampleSizeSelectorProps> = ({
         <Text className="text-lg font-semibold text-gray-800 mb-1">
           Taille d&apos;échantillons à générer
         </Text>
-        <Text className="text-sm text-gray-600">
-          Choisissez le nombre de lignes de données synthétiques à créer
-        </Text>
       </View>
 
       {/* Tailles prédéfinies */}
       <View className="p-4 bg-white">
-        <Text className="text-base font-medium text-gray-700 mb-3">
-          Tailles recommandées
-        </Text>
         <View className="flex-row flex-wrap gap-2">
           {PRESET_SIZES.map((preset) => (
             <TouchableOpacity

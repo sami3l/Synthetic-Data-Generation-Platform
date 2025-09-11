@@ -159,7 +159,7 @@ export default function ProfileScreen() {
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-gradient-to-b from-indigo-50 mt-12 mb-6 to-white">
+    <SafeAreaView className="flex-1 bg-gradient-to-b from-indigo-50 mt-12 mb-6 to-white web:w-1/2 web:bg-gray-50 web:max-w-full web:self-center">
       <Animated.ScrollView 
         className="flex-1 px-5"
         style={{ opacity: fadeAnim, transform: [{ scale: scaleAnim }] }}
@@ -172,7 +172,7 @@ export default function ProfileScreen() {
         }
       >
         {/* Profile Header */}
-        <View className="mt-8 mb-6">
+        <View className="mt-8 mb-6 ">
           <View className="items-center">
             {/* Avatar with gradient border */}
             <View className="w-24 h-24 rounded-full mb-4 p-1 bg-gradient-to-r from-indigo-500 to-purple-600">
@@ -193,7 +193,7 @@ export default function ProfileScreen() {
         </View>
 
         {/* Personal Information Card */}
-        <View className="bg-white rounded-2xl p-6 mb-6 shadow-sm border border-gray-100">
+        <View className="bg-white rounded-2xl p-6 mb-6 shadow-sm border web:w-1/2 web:self-center border-gray-100">
           <View className="flex-row items-center justify-between mb-5">
             <Text className="text-lg font-bold text-gray-900">Personal Information</Text>
             <TouchableOpacity 
@@ -250,7 +250,7 @@ export default function ProfileScreen() {
         </View>
 
         {/* Account Details Card */}
-        <View className="bg-white rounded-2xl p-6 mb-6 shadow-sm border border-gray-100">
+        <View className="bg-white rounded-2xl p-6 mb-6 shadow-sm border border-gray-100  web:w-1/2 web:self-center">
           <Text className="text-lg font-bold text-gray-900 mb-5">Account Details</Text>
           
           <View className="space-y-4">
@@ -285,7 +285,7 @@ export default function ProfileScreen() {
         </View>
 
         {/* Quick Actions */}
-        <View className="mb-8">
+        <View className="mb-8 web:w-1/2 web:self-center">
           <Text className="text-lg font-bold text-gray-900 mb-4 px-1">Quick Actions</Text>
           
           <View className="space-y-3">
@@ -348,25 +348,10 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </View>
         </View>
-        
-
-        {/* Admin Button - Visible seulement pour les admins */}
-        {/* {isAdmin && (
-          <TouchableOpacity
-            className="w-full py-3 rounded-lg items-center justify-center bg-blue-600 mb-4"
-            onPress={navigateToAdmin}
-            activeOpacity={0.8}
-          >
-            <View className="flex-row items-center">
-              <Icon source="shield-account" size={20} color="black" />
-              <Text className="text-white font-semibold ml-2">Administration</Text>
-            </View>
-          </TouchableOpacity>
-        )} */}
-
+     
         {/* Logout Button */}
         <TouchableOpacity
-          className={`w-fit py-3 rounded-xl items-center justify-center ${isLoggingOut
+          className={`w-fit py-3 rounded-xl self-center justify-center items-center web:justify-center web:w-4/5 ${isLoggingOut
             ? 'bg-gray-400' : 'bg-red-600'}`}
             onPress={handleLogout}
             disabled={isLoggingOut}

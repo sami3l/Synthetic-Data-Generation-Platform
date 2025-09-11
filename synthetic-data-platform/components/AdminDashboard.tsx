@@ -41,12 +41,12 @@ const AdminDashboard: React.FC = () => {
       icon: '📝',
       description: 'Historique des actions'
     },
-    {
-      id: 'analytics' as TabType,
-      title: 'Analytics',
-      icon: '📊',
-      description: 'Statistiques détaillées'
-    },
+    // {
+    //   id: 'analytics' as TabType,
+    //   title: 'Analytics',
+    //   icon: '📊',
+    //   description: 'Statistiques détaillées'
+    // },
   ];
 
   const renderContent = () => {
@@ -69,7 +69,7 @@ const AdminDashboard: React.FC = () => {
   return (
     <View className="flex-1 bg-gray-50">
       {/* Header principal */}
-      <View className="bg-white border-b border-gray-200">
+      <View className="bg-transparent border-gray-200">
         <View className="p-4 pb-2">
           {/* <Text className="text-3xl font-bold text-gray-900">
             🛠️ Administration
@@ -81,7 +81,7 @@ const AdminDashboard: React.FC = () => {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          className="px-4"
+          className="px-4 web:justify-center "
         >
           <View className="flex-row space-x-2 pb-4">
             {tabs.map((tab) => (

@@ -8,6 +8,7 @@ import {
   Alert,
   RefreshControl,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { adminService, DataRequest } from '../services/api/adminService';
@@ -20,6 +21,9 @@ const RequestManagement: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectionReasonInput, setRejectionReasonInput] = useState('');
+  const [selectedRequestForReject, setSelectedRequestForReject] = useState<DataRequest | null>(null);
 
   const loadRequests = async () => {
     try {
@@ -93,30 +97,32 @@ const RequestManagement: React.FC = () => {
     );
   };
 
-  const quickReject = async (request: DataRequest) => {
-    Alert.alert(
-      'Rejet rapide',
-      `Rejeter la requête "${request.request_name}" ?`,
-      [
-        { text: 'Annuler', style: 'cancel' },
-        {
-          text: 'Rejeter',
-          style: 'destructive',
-          onPress: async () => {
-            setActionLoading(true);
-            try {
-              await adminService.rejectRequest(request.id, 'Rejet rapide depuis la liste');
-              Alert.alert('Succès', 'Requête rejetée');
-              loadRequests();
-            } catch {
-              Alert.alert('Erreur', 'Impossible de rejeter la requête');
-            } finally {
-              setActionLoading(false);
-            }
-          }
-        }
-      ]
-    );
+  // const quickReject = async (request: DataRequest) => {
+  //   setSelectedRequestForReject(request);
+  //   setShowRejectModal(true);
+  // };
+
+  const handleRejectWithReason = async () => {
+    if (!selectedRequestForReject) return;
+    
+    if (!rejectionReasonInput.trim()) {
+      Alert.alert('Erreur', 'Veuillez indiquer une raison de rejet');
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      await adminService.rejectRequest(selectedRequestForReject.id, rejectionReasonInput);
+      Alert.alert('Succès', 'Requête rejetée avec succès');
+      setShowRejectModal(false);
+      setRejectionReasonInput('');
+      setSelectedRequestForReject(null);
+      loadRequests();
+    } catch {
+      Alert.alert('Erreur', 'Impossible de rejeter la requête');
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -158,7 +164,7 @@ const RequestManagement: React.FC = () => {
   }
 
   return (
-    <View className="flex-1 bg-gray-50">
+    <View className="flex-1 bg-gray-50 web:w-1/2 web:bg-transparent web:max-w-full web:self-center">
       {/* Header avec recherche */}
       <View className="bg-white p-4 border-b border-gray-200">
         <Text className="text-2xl font-bold text-gray-900 mb-4">
@@ -256,7 +262,10 @@ const RequestManagement: React.FC = () => {
                   </TouchableOpacity>
                   
                   <TouchableOpacity
-                    onPress={() => quickReject(request)}
+                    onPress={() => {
+                      setSelectedRequestForReject(request);
+                      setShowRejectModal(true);
+                    }}
                     disabled={actionLoading}
                     className="p-2 bg-red-100 rounded-lg"
                   >
@@ -292,6 +301,61 @@ const RequestManagement: React.FC = () => {
           </View>
         )}
       </ScrollView>
+
+      {/* Modal de rejet avec raison */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={showRejectModal}
+        onRequestClose={() => setShowRejectModal(false)}
+      >
+        <View className="flex-1 justify-center items-center bg-black bg-opacity-50">
+          <View className="bg-white rounded-lg p-6 m-4 w-4/5">
+            <Text className="text-xl font-bold text-gray-900 mb-4">
+              Rejeter la requête
+            </Text>
+            {selectedRequestForReject && (
+              <Text className="text-gray-600 mb-4">
+                Requête : <Text className="font-semibold">{selectedRequestForReject.request_name}</Text>
+              </Text>
+            )}
+            <Text className="text-gray-600 mb-4">
+              Veuillez indiquer la raison du rejet :
+            </Text>
+            <TextInput
+              className="border border-gray-300 rounded-lg p-3 mb-4 h-24"
+              placeholder="Raison du rejet..."
+              value={rejectionReasonInput}
+              onChangeText={setRejectionReasonInput}
+              multiline
+              textAlignVertical="top"
+            />
+            <View className="flex-row space-x-3">
+              <TouchableOpacity
+                onPress={() => {
+                  setShowRejectModal(false);
+                  setRejectionReasonInput('');
+                  setSelectedRequestForReject(null);
+                }}
+                className="flex-1 p-3 bg-gray-200 rounded-lg"
+              >
+                <Text className="text-center font-medium text-gray-700">
+                  Annuler
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleRejectWithReason}
+                disabled={actionLoading}
+                className="flex-1 p-3 bg-red-600 rounded-lg"
+              >
+                <Text className="text-center font-medium text-white">
+                  Rejeter
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {actionLoading && (
         <View className="absolute inset-0 bg-black bg-opacity-30 justify-center items-center">
