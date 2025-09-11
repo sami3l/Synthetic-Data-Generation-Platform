@@ -40,3 +40,18 @@ async def mark_notification_as_read(
     notification.is_read = True
     db.commit()
     return {"status": "success"}
+
+@router.post("/read-all")
+async def mark_all_notifications_as_read(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Marque toutes les notifications comme lues"""
+    notifications = db.query(Notification)\
+        .filter(Notification.user_id == current_user.id)\
+        .all()
+    
+    for notification in notifications:
+        notification.is_read = True
+    db.commit()
+    return {"status": "success"}

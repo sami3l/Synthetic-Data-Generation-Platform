@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   ScrollView,
@@ -6,18 +6,39 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
-import { TextInput, Text } from 'react-native-paper';
+import { TextInput, Text, useTheme } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { authService } from '@/services/api/authService';
+import Icon from '@expo/vector-icons/MaterialCommunityIcons';
 
 const LoginScreen = () => {
+  const theme = useTheme();
   const [email, setEmail] = useState('demo@example.com');
   const [password, setPassword] = useState('password');
   const [name, setName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSignup, setIsSignup] = useState(false);
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+
+  // Check for existing user session
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const token = await AsyncStorage.getItem('token');
+        const user = await AsyncStorage.getItem('user');
+        if (token && user) {
+          router.replace('/(tabs)/home');
+        }
+      } catch (error) {
+        console.log('No existing session found');
+      }
+    };
+    checkAuth();
+  }, []);
 
   const handleSubmit = async () => {
     if (!email || !password || (isSignup && !name)) {
@@ -27,108 +48,157 @@ const LoginScreen = () => {
 
     setIsLoading(true);
     try {
-      const response = isSignup
-        ? await authService.signup({ email, password, username: name })
-        : await authService.login(email, password);
-
-      // Fix: Use access_token instead of token for login response
-      const token = isSignup ? response.token : response.access_token;
-      
-      if (token) {
-        await AsyncStorage.setItem('token', token);
-      }
-      
-      // Store user data if available
-      if (response.user) {
-        await AsyncStorage.setItem('user', JSON.stringify(response.user));
+      let response;
+      if (isSignup) {
+        response = await authService.signup({ email, password, username: name });
+        await AsyncStorage.setItem('token', response.token);
+      } else {
+        response = await authService.login(email, password);
+        await AsyncStorage.setItem('token', response.access_token);
+        
+        // Fetch user profile after successful login
+        if (response.access_token) {
+          const userProfile = await authService.getProfile();
+          await AsyncStorage.setItem('user', JSON.stringify(userProfile));
+        }
       }
 
       router.replace('/(tabs)/home');
     } catch (error: any) {
-      Alert.alert('Error', error?.message || 'An error occurred.');
+      let errorMessage = 'An error occurred. Please try again.';
+      if (error.message) {
+        errorMessage = error.message;
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      }
+      Alert.alert('Error', errorMessage);
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-gradient-to-br from-blue-50 to-indigo-100">
-      <ScrollView
-        className="flex-1 px-6"
-        contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+    <SafeAreaView className="flex-1 bg-white">
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        className="flex-1"
       >
-        <View className="items-center mb-12">
-          <Text className="text-3xl font-bold text-gray-900 text-center">
-            Synthetic Data Platform
-          </Text>
-          <Text className="text-gray-600 mt-2 text-center">
-            {isSignup ? 'Create your account' : 'Sign in to your account'}
-          </Text>
-        </View>
-
-        <View className="space-y-6">
-          <View>
-            <Text className="text-sm font-medium text-gray-700 mb-2">Email Address</Text>
-            <TextInput
-              mode="outlined"
-              value={email}
-              onChangeText={setEmail}
-              placeholder="Enter your email"
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
+        <ScrollView
+          className="flex-1 px-6"
+          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View className="items-center mb-10">
+            <View className="bg-indigo-100 p-4 rounded-full mb-4">
+              <Icon name="database" size={40} color={theme.colors.primary} />
+            </View>
+            <Text className="text-3xl font-bold text-gray-900 text-center">
+              Synthetic Data Generation
+            </Text>
+            <Text className="text-gray-600 mt-2 text-center">
+              {isSignup ? 'Create your account' : 'Welcome back! Sign in to continue'}
+            </Text>
           </View>
 
-          {isSignup && (
+          <View className="space-y-4">
             <View>
-              <Text className="text-sm font-medium text-gray-700 mb-2">Full Name</Text>
+              <Text className="text-sm font-medium text-gray-700 mb-1">Email Address</Text>
               <TextInput
                 mode="outlined"
-                value={name}
-                onChangeText={setName}
-                placeholder="Enter your full name"
+                value={email}
+                onChangeText={setEmail}
+                placeholder="Enter your email"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                left={<TextInput.Icon icon="email" />}
+                outlineColor="#e5e7eb"
+                activeOutlineColor={theme.colors.primary}
+              
               />
             </View>
-          )}
 
-          <View>
-            <Text className="text-sm font-medium text-gray-700 mb-2">Password</Text>
-            <TextInput
-              mode="outlined"
-              value={password}
-              onChangeText={setPassword}
-              placeholder="Enter your password"
-              secureTextEntry
-            />
-          </View>
-
-          <TouchableOpacity
-            className={`w-full py-3 rounded-lg items-center justify-center ${
-              isLoading ? 'bg-indigo-400' : 'bg-indigo-600'
-            }`}
-            onPress={handleSubmit}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <Text className="text-white text-lg font-semibold">
-                {isSignup ? 'Create Account' : 'Sign In'}
-              </Text>
+            {isSignup && (
+              <View>
+                <Text className="text-sm font-medium text-gray-700 mb-1">Full Name</Text>
+                <TextInput
+                  mode="outlined"
+                  value={name}
+                  onChangeText={setName}
+                  placeholder="Enter your full name"
+                  left={<TextInput.Icon icon="account" />}
+                  outlineColor="#e5e7eb"
+                  activeOutlineColor={theme.colors.primary}
+                />
+              </View>
             )}
-          </TouchableOpacity>
 
-          <TouchableOpacity className="py-2" onPress={() => setIsSignup(!isSignup)}>
-            <Text className="text-indigo-600 text-center">
-              {isSignup ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
-            </Text>
-          </TouchableOpacity>
+            <View>
+              <Text className="text-sm font-medium text-gray-700 mb-1">Password</Text>
+              <TextInput
+                mode="outlined"
+                value={password}
+                onChangeText={setPassword}
+                placeholder="Enter your password"
+                secureTextEntry={!isPasswordVisible}
+                left={<TextInput.Icon icon="lock" />}
+                right={
+                  <TextInput.Icon 
+                    icon={isPasswordVisible ? "eye-off" : "eye"} 
+                    onPress={() => setIsPasswordVisible(!isPasswordVisible)}
+                  />
+                }
+                outlineColor="#e5e7eb"
+                activeOutlineColor={theme.colors.primary}
+              />
+            </View>
 
-          <Text className="text-xs text-gray-500 text-center">
-            Demo credentials: demo@example.com / password
-          </Text>
-        </View>
-      </ScrollView>
+            {!isSignup && (
+              <TouchableOpacity className="self-end">
+                <Text className="text-indigo-600 text-sm font-medium">
+                  Forgot password?
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            
+            <View className="flex-row items-center my-4">
+              <></>
+            </View>
+
+            <TouchableOpacity
+              className={`w-full py-3  rounded-lg items-center justify-center shadow-sm ${
+                isLoading ? 'bg-indigo-400' : 'bg-indigo-600'
+              }`}
+              onPress={handleSubmit}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text className="text-white text-lg font-semibold">
+                  {isSignup ? 'Create Account' : 'Sign In'}
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <View className="flex-row items-center my-4">
+              <View className="flex-1 h-px bg-gray-200" />
+              <Text className="px-3 text-gray-500">or</Text>
+              <View className="flex-1 h-px bg-gray-200" />
+            </View>
+
+            <TouchableOpacity 
+              className="py-3" 
+              onPress={() => setIsSignup(!isSignup)}
+            >
+              <Text className="text-indigo-600 text-center font-medium">
+                {isSignup ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
+              </Text>
+            </TouchableOpacity>
+
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 };

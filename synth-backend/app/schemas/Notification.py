@@ -16,4 +16,4 @@ class NotificationOut(NotificationBase):
     timestamp: datetime.datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True

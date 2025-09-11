@@ -5,6 +5,7 @@ from app.db.database import Base
 
 class TVAEModel(Base):
     __tablename__ = "tvae_models"
+    __table_args__ = {'extend_existing': True}
 
     id = Column(Integer, primary_key=True, index=True)
     model_name = Column(String, nullable=False)
@@ -12,4 +13,4 @@ class TVAEModel(Base):
     trained_at = Column(DateTime, default=datetime.utcnow)
 
     
-    synthetic_dataset = relationship("SyntheticDataset", back_populates="tvae_model")
+    synthetic_dataset = relationship("SyntheticDataset", back_populates="tvae_model", uselist=False)
