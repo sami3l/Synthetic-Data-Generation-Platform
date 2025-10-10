@@ -178,17 +178,17 @@ const AdminHome: React.FC = () => {
       >
         {/* Header moderne avec gradient */}
         <View className="bg-gradient-to-r from-blue-600 to-purple-600 p-8 rounded-b-3xl mb-8 web:rounded-2xl web:mt-6">
-          <Text className="text-white text-center text-4xl font-bold mb-3">
+          <Text className="text-black text-center text-4xl font-bold mb-3">
             🛡️ Administration
           </Text>
-          <Text className="text-gray-100 text-center text-lg">
+          <Text className="text-gray-900 text-center text-lg">
             Tableau de bord administrateur
           </Text>
         </View>
 
         {/* Statistics Cards avec grid responsive */}
         <View className="px-4 mb-8 web:px-0">
-          <Text className="text-2xl font-bold text-gray-900 mb-6 web:text-3xl">
+          <Text className="text-2xl font-bold text-black-900 mb-6 web:text-3xl">
             Vue d&apos;ensemble
           </Text>
           <View className="flex-row flex-wrap justify-between web:grid web:grid-cols-4 web:gap-6">
@@ -250,7 +250,7 @@ const AdminHome: React.FC = () => {
             </TouchableOpacity>
 
             <TouchableOpacity
-               className="bg-white rounded-2xl p-6 mb-4 shadow-sm border border-gray-100 w-full web:mb-0 web:transform web:transition-all web:duration-200 web:hover:shadow-lg web:hover:scale-105"
+              className="bg-white rounded-2xl p-6 mb-4 shadow-sm border border-gray-100 w-full web:mb-0 web:transform web:transition-all web:duration-200 web:hover:shadow-lg web:hover:scale-105"
               onPress={() => router.push("/admin-requests")}
             >
               <View className="flex-row items-center justify-between">
@@ -272,7 +272,7 @@ const AdminHome: React.FC = () => {
             </TouchableOpacity>
 
             <TouchableOpacity
-               className="bg-white rounded-2xl p-6 mb-4 shadow-sm border border-gray-100 w-full web:mb-0 web:transform web:transition-all web:duration-200 web:hover:shadow-lg web:hover:scale-105"
+              className="bg-white rounded-2xl p-6 mb-4 shadow-sm border border-gray-100 w-full web:mb-0 web:transform web:transition-all web:duration-200 web:hover:shadow-lg web:hover:scale-105"
               onPress={() => router.push("/admin-logs")}
             >
               <View className="flex-row items-center justify-between">

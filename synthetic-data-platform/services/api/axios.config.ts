@@ -92,26 +92,26 @@ axiosInstance.interceptors.response.use(
     
     if (error.response?.status === 401) {
       // Token expired or invalid, clear storage and redirect to login
-      console.log('🔑 Session expirée, redirection vers le login...');
-      
-      if (!isRedirecting) {
-        isRedirecting = true;
-        try {
-          await AsyncStorage.multiRemove(['token', 'user']);
-          // Rediriger vers l'écran de connexion
-          NavigationService.navigateToLogin();
-          // Remplacer l'erreur par un message plus clair
-          error.message = 'Session expired. Please login again.';
-          
-          // Reset après un délai pour permettre de nouvelles tentatives
-          setTimeout(() => {
-            isRedirecting = false;
-          }, 2000);
-        } catch (storageError) {
-          console.error('Error clearing storage:', storageError);
-          isRedirecting = false;
-        }
-      }
+      console.log("🔑 Session expirée, redirection vers le login...");
+
+      // if (!isRedirecting) {
+      //   isRedirecting = true;
+      //   try {
+      await AsyncStorage.multiRemove(["token", "user"]);
+      // Rediriger vers l'écran de connexion
+      // NavigationService.navigateToLogin();
+      // Remplacer l'erreur par un message plus clair
+      //   error.message = 'Session expired. Please login again.';
+
+      //   // Reset après un délai pour permettre de nouvelles tentatives
+      //   setTimeout(() => {
+      //     isRedirecting = false;
+      //   }, 2000);
+      // } catch (storageError) {
+      //   console.error('Error clearing storage:', storageError);
+      //   isRedirecting = false;
+      // }
+      // }
     }
     return Promise.reject(error);
   }
