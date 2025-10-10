@@ -1,77 +1,112 @@
-// hooks/useAuth.ts
-import { useSelector, useDispatch } from 'react-redux';
-import { useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { login, initializeUser } from '../features/auth/authSlice';
-import { RootState, AppDispatch } from '../store';
-// import NavigationService from '../services/NavigationService';
+import { useSelector, useDispatch } from "react-redux";
+import { useEffect, useState, useRef, useCallback } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { login, initializeUser, logout } from "@/features/auth/authSlice";
+import { RootState, AppDispatch } from "@/store";
+
+
 
 export const useAuth = () => {
   const dispatch = useDispatch<AppDispatch>();
-  const { user, loading, error } = useSelector((state: RootState) => state.auth);
+  const { user, token, loading: reduxLoading } = useSelector((state: RootState) => state.auth);
 
-  // Charger l'utilisateur depuis AsyncStorage au démarrage
+  const [isInitialized, setIsInitialized] = useState(false);
+
   useEffect(() => {
-    const loadUserFromStorage = async () => {
-      try {
-        const token = await AsyncStorage.getItem('token');
-        const userData = await AsyncStorage.getItem('user');
-        
-        if (token && userData) {
-          const user = JSON.parse(userData);
-          dispatch(initializeUser({ user, token }));
-        }
-      } catch (error) {
-        console.error('Error loading user from storage:', error);
+    const init = async () => {
+      const storedToken = await AsyncStorage.getItem("token");
+      const storedUser = await AsyncStorage.getItem("user");
+
+      // Only dispatch if Redux has nothing
+      if (storedToken && storedUser && !user) {
+        dispatch(initializeUser({ user: JSON.parse(storedUser), token: storedToken }));
       }
+      setIsInitialized(true); // ✅ Mark auth as ready
     };
-
-    // Charger seulement si pas déjà connecté
-    if (!user) {
-      loadUserFromStorage();
-    }
-  }, [dispatch, user]);
-
-  const handleLogin = async (email: string, password: string) => {
-    try {
-      const result = await (dispatch(login({ email, password })) as any).unwrap();
-      
-      // Sauvegarder dans AsyncStorage après login réussi
-      if (result.user && result.access_token) {
-        await AsyncStorage.setItem('user', JSON.stringify(result.user));
-        await AsyncStorage.setItem('token', result.access_token);
-      }
-      
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  // const handleLogout = async () => {
-  //   try {
-  //     // Nettoyer le Redux store
-  //     dispatch(logout());
-      
-  //     // Nettoyer AsyncStorage
-  //     await AsyncStorage.multiRemove(['token', 'user']);
-      
-  //     // Rediriger vers la page de connexion
-  //     NavigationService.navigateToLogin();
-      
-  //     console.log('🚪 Déconnexion réussie');
-  //   } catch (error) {
-  //     console.error('❌ Erreur lors de la déconnexion:', error);
-  //     // Même en cas d'erreur, forcer la redirection
-  //     NavigationService.navigateToLogin();
-  //   }
-  // };
+    init();
+  }, [dispatch]); // only run once
 
   return {
     user,
-    loading,
-    error,
-    login: handleLogin,
-    // logout: handleLogout,
+    token,
+    loading: reduxLoading || !isInitialized,
+    isInitialized,
   };
 };
+
+// export const useAuth = () => {
+//   const dispatch = useDispatch<AppDispatch>();
+//   const { user, token, loading: reduxLoading, error } = useSelector(
+//     (state: RootState) => state.auth
+//   );
+
+//   // ✅ track initialization
+//   const [isInitialized, setIsInitialized] = useState(false);
+//   const initCalledRef = useRef(false);
+
+//   // ✅ initialize only once
+//   useEffect(() => {
+//     if (initCalledRef.current) return;
+//     initCalledRef.current = true;
+
+//     let mounted = true;
+
+//     const load = async () => {
+//       try {
+//         const storedToken = await AsyncStorage.getItem("token");
+//         const userData = await AsyncStorage.getItem("user");
+
+//         if (storedToken && userData) {
+//           const parsedUser = JSON.parse(userData);
+
+//           // ✅ dispatch only if Redux doesn't already have the same token/user
+//           if (!token || !user) {
+//             dispatch(initializeUser({ user: parsedUser, token: storedToken }));
+//           }
+//         }
+//       } catch (err) {
+//         console.error("useAuth load error:", err);
+//       } finally {
+//         if (mounted) setIsInitialized(true);
+//       }
+//     };
+
+//     load();
+
+//     return () => {
+//       mounted = false;
+//     };
+//   }, []); // ✅ empty dependency array → runs only once
+
+//   // ✅ stable login function
+//   const handleLogin = useCallback(async (email: string, password: string) => {
+//     try {
+//       const result = await (dispatch(login({ email, password })) as any).unwrap();
+
+//       if (result.user && result.access_token) {
+//         await AsyncStorage.setItem("user", JSON.stringify(result.user));
+//         await AsyncStorage.setItem("token", result.access_token);
+//       }
+//       return true;
+//     } catch (err) {
+//       return false;
+//     }
+//   }, [dispatch]);
+
+//   // ✅ stable logout function
+//   const handleLogout = useCallback(async () => {
+//     await AsyncStorage.removeItem("user");
+//     await AsyncStorage.removeItem("token");
+//     dispatch(logout());
+//   }, [dispatch]);
+
+//   return {
+//     user,
+//     token,
+//     loading: reduxLoading || !isInitialized,
+//     error,
+//     login: handleLogin,
+//     logout: handleLogout,
+//     isInitialized,
+//   };
+// };

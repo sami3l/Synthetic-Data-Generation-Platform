@@ -34,7 +34,7 @@ const LoginScreen = () => {
           router.replace('/(tabs)/home');
         }
       } catch (error) {
-        console.log('No existing session found');
+        console.log(error,'No existing session found');
       }
     };
     checkAuth();
