@@ -10,3 +10,5 @@ synthetic-data-platform/.env
 ENV_SETUP.md
 synth-backend/alembic/versions/*
 
+.env
+
